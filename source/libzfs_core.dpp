@@ -1,3 +1,5 @@
+module libzfs_core;
+
 /+
 	work towards Dlang wrapper for libzfs-core
 +/
