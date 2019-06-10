@@ -1,0 +1,6 @@
+name "libzfs-core"
+description "D high level wrapper for libzfs-core"
+authors "Laeeth Isharc"
+copyright "Copyright © 2019, Laeeth Isharc"
+license "proprietary"
+dependency "dpp" version="~>0.2.3"
