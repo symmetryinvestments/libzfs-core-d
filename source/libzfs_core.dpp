@@ -4,45 +4,533 @@ module libzfs_core;
 	work towards Dlang wrapper for libzfs-core
 +/
 
+#define uint32_t uint
 
 #include <stdint.h>
 #include <libzfs_core.h>
+#include <libnvpair.h>
 
+import std.string:toStringz, fromStringz;
+import std.exception;
+import taggedalgebraic;
+import std.conv:to;
+
+alias toCString = toStringz;
+alias fromCString = fromStringz;
 
 struct SILdoc {string value; }
 
-
-// int lzc_ioctl(zfs_ioc_t ioc, const char *name, nvlist_t *source, nvlist_t **resultp)
-
-struct Zfs
+void rename(string from, string to)
 {
-	void this()
+	auto result = lzc_rename(from.toCString, to.toCString);
+	enforce(result==0,"something went wrong");
+}
+
+// extern(C) void nvlist_free(nvlist_t*);
+
+enum DatasetType
+{
+	zfs = LZC_DATSET_TYPE_ZFS,
+	zvol = LZC_DATSET_TYPE_ZVOL,
+}
+
+
+enum VdevType
+{
+	root,
+	mirror,
+	replacing,
+	raidz,
+	disk,
+	file,
+	missing,
+	hole,
+	spare,
+	log,
+	l2cache,
+}
+
+enum PoolStatus
+{
+	corruptCache,
+	missingDevR,                         /* missing device with replicas */
+	missingDevNr,                        /* missing device with no replicas */
+	corruptLabelR,                       /* bad device label with replicas */
+	corruptLabelNr,                      /* bad device label with no replicas */
+	badGUIDSum,                          /* sum of device guids didn't match */
+	corruptPool,                         /* pool metadata is corrupted */
+	corruptData,                         /* data errors in user (meta)data */
+	failingDev,                          /* device experiencing errors */
+	versionNewer,                        /* newer on-disk version */
+	hostidMismatch,                      /* last accessed by another system */
+	hosidActive,                         /* currently active on another system */
+	hostidRequired,                      /* multihost=on and hostid=0 */
+	ioFailureWait,                       /* failed I/O, failmode 'wait' */
+	ioFailureContinue,                   /* failed I/O, failmode 'continue' */
+	ioFailureMap,                        /* ailed MMP, failmode not 'panic' */
+	badLog,                              /* cannot read log chain(s) */
+	errata,                              /* informational errata available */
+
+	/*
+	 * If the pool has unsupported features but can still be opened in
+	 * read-only mode, its status is ZPOOL_STATUS_UNSUP_FEAT_WRITE. If the
+	 * pool has unsupported features but cannot be opened at all, its
+	 * status is ZPOOL_STATUS_UNSUP_FEAT_READ.
+	 */
+	unsupFeatRead,  /* unsupported features for read */
+	unsupFeatWrite, /* unsupported features for write */
+
+	/*
+	 * These faults have no corresponding message ID.  At the time we are
+	 * checking the status, the original reason for the FMA fault (I/O or
+	 * checksum errors) has been lost.
+	 */
+	faultedDevR,  /* faulted device with replicas */
+	faultedDevNr, /* faulted device with no replicas */
+
+	/*
+	 * The following are not faults per se, but still an error possibly
+	 * requiring administrative attention.  There is no corresponding
+	 * message ID.
+	 */
+	versionOlder, /* older legacy on-disk version */
+	featDisabled, /* supported features are disabled */
+	resilvering,  /* device being resilvered */
+	offlineDev,   /* device online */
+	removedDev,   /* removed device */
+
+	/*
+	 * Finally, the following indicates a healthy pool.
+	 */
+	ok,
+}
+
+// Possible ZFS pool states
+enum PoolState
+{
+	active,            					/* In active use		*/
+	exported,                           /* Explicitly exported		*/
+	destroyed,                          /* Explicitly destroyed		*/
+	spare,                              /* Reserved for hot spare use	*/
+	l2cache,                            /* Level 2 ARC device		*/
+	uninitialized,                      /* Internal spa_t state		*/
+	unavail,                            /* Internal libzfs state	*/
+	potentiallyActive                  /* Internal libzfs state	*/
+}
+
+// Pool properties. Enumerates available ZFS pool properties. Use it to access
+// pool properties either to read or set soecific property.
+enum PoolProperty
+{
+	cont,
+	inval,
+	name,
+	size,
+	capacity,
+	altroot,
+	health,
+	guid,
+	version_,
+	bootfs,
+	delegation,
+	autoReplace,
+	cacheFile,
+	failureMode,
+	listSnaps,
+	autoExpand,
+	dedupDitto,
+	dedupRatio,
+	free,
+	allocated,
+	readOnly,
+	ashift,
+	comment,
+	expandSize,
+	freeing,
+	fragmentation,
+	leaked,
+	maxBlockSize,
+	tName,
+	maxNodeSize,
+	multiHost,
+	poolNumProps,
+}
+
+
+/*
+ * Dataset properties are identified by these constants and must be added to
+ * the end of this list to ensure that external consumers are not affected
+ * by the change. If you make any changes to this list, be sure to update
+ * the property table in module/zcommon/zfs_prop.c.
+ */
+enum DatasetProperty
+{
+	cont,
+	bad,
+	type,
+	creation,
+	used,
+	available,
+	referenced,
+	compressRatio,
+	mounted,
+	origin,
+	quota,
+	reservation,
+	volSize,
+	volBlockSize,
+	recordsize,
+	mountpoint,
+	sharenfs,
+	checksum,
+	compression,
+	atime,
+	devices,
+	exec,
+	setuid,
+	readonly,
+	zoned,
+	snapdir,
+	private_, /* not exposed to user, temporary */
+	aclinherit,
+	createTXG, /* not exposed to the user */
+	name,      /* not exposed to the user */
+	canmount,
+	iscsioptions, /* not exposed to the user */
+	xattr,
+	numclones, /* not exposed to the user */
+	copies,
+	version_,
+	utf8only,
+	normalize,
+	case_,
+	vscan,
+	nbmand,
+	sharesmb,
+	refquota,
+	refreservation,
+	guid,
+	primarycache,
+	secondarycache,
+	usedsnap,
+	usedds,
+	usedchild,
+	usedrefreserv,
+	useraccounting, /* not exposed to the user */
+	stmfShareinfo,  /* not exposed to the user */
+	deferDestroy,
+	userrefs,
+	logbias,
+	unique,   /* not exposed to the user */
+	objsetid, /* not exposed to the user */
+	dedup,
+	mlslabel,
+	sync,
+	dnodeSize,
+	refratio,
+	written,
+	clones,
+	logicalused,
+	logicalreferenced,
+	inconsistent, /* not exposed to the user */
+	volmode,
+	filesystemLimit,
+	snapshotLimit,
+	filesystemCount,
+	snapshotCount,
+	snapdev,
+	acltype,
+	selinuxContext,
+	selinuxFsContext,
+	selinuxDefContext,
+	selinuxRootContext,
+	relatime,
+	redundantMetadata,
+	overlay,
+	prevSnap,
+	receiveResumeToken,
+	encryption,
+	keyLocation,
+	keyFormat,
+	pBKDF2Salt,
+	pBKDF2Iters,
+	encryptionRoot,
+	keyGUID,
+	keyStatus,
+	remapTXG, /* not exposed to the user */
+	datasetNumProps,
+}
+
+
+// ZFS errors
+enum ZfsError
+{
+	success            = 0,            /* no error -- success */
+	nomem              , // = 2000 << iota, /* out of memory */
+	badprop,                           /* invalid property value */
+	propreadonly,                      /* cannot set readonly property */
+	proptype,                          /* property does not apply to dataset type */
+	propnoninherit,                    /* property is not inheritable */
+	propspace,                         /* bad quota or reservation */
+	badtype,                           /* dataset is not of appropriate type */
+	busy,                              /* pool or dataset is busy */
+	exists,                            /* pool or dataset already exists */
+	noent,                             /* no such pool or dataset */
+	badstream,                         /* bad backup stream */
+	dsreadonly,                        /* dataset is readonly */
+	voltoobig,                         /* volume is too large for 32-bit system */
+	invalidname,                       /* invalid dataset name */
+	badrestore,                        /* unable to restore to destination */
+	badbackup,                         /* backup failed */
+	badtarget,                         /* bad attach/detach/replace target */
+	nodevice,                          /* no such device in pool */
+	baddev,                            /* invalid device to add */
+	noreplicas,                        /* no valid replicas */
+	resilvering,                       /* currently resilvering */
+	badversion,                        /* unsupported version */
+	poolunavail,                       /* pool is currently unavailable */
+	devoverflow,                       /* too many devices in one vdev */
+	badpath,                           /* must be an absolute path */
+	crosstarget,                       /* rename or clone across pool or dataset */
+	zoned,                             /* used improperly in local zone */
+	mountfailed,                       /* failed to mount dataset */
+	umountfailed,                      /* failed to unmount dataset */
+	unsharenfsfailed,                  /* unshare(1M) failed */
+	sharenfsfailed,                    /* share(1M) failed */
+	perm,                              /* permission denied */
+	nospc,                             /* out of space */
+	fault,                             /* bad address */
+	io,                                /* I/O error */
+	intr,                              /* signal received */
+	isspare,                           /* device is a hot spare */
+	invalconfig,                       /* invalid vdev configuration */
+	recursive,                         /* recursive dependency */
+	nohistory,                         /* no history object */
+	poolprops,                         /* couldn't retrieve pool props */
+	poolNotsup,                        /* ops not supported for this type of pool */
+	poolInvalarg,                      /* invalid argument for this pool operation */
+	nametoolong,                       /* dataset name is too long */
+	openfailed,                        /* open of device failed */
+	nocap,                             /* couldn't get capacity */
+	labelfailed,                       /* write of label failed */
+	badwho,                            /* invalid permission who */
+	badperm,                           /* invalid permission */
+	badpermset,                        /* invalid permission set name */
+	nodelegation,                      /* delegated administration is disabled */
+	unsharesmbfailed,                  /* failed to unshare over smb */
+	sharesmbfailed,                    /* failed to share over smb */
+	badcache,                          /* bad cache file */
+	isl2CACHE,                         /* device is for the level 2 ARC */
+	vdevnotsup,                        /* unsupported vdev type */
+	notsup,                            /* ops not supported on this dataset */
+	activeSpare,                       /* pool has active shared spare devices */
+	unplayedLogs,                      /* log device has unplayed logs */
+	reftagRele,                        /* snapshot release: tag not found */
+	reftagHold,                        /* snapshot hold: tag already exists */
+	tagtoolong,                        /* snapshot hold/rele: tag too long */
+	pipefailed,                        /* pipe create failed */
+	threadcreatefailed,                /* thread create failed */
+	postsplitOnline,                   /* onlining a disk after splitting it */
+	scrubbing,                         /* currently scrubbing */
+	noScrub,                           /* no active scrub */
+	diff,                              /* general failure of zfs diff */
+	diffdata,                          /* bad zfs diff data */
+	poolreadonly,                      /* pool is in read-only mode */
+	unknown,
+}
+
+// vdev states are ordered from least to most healthy.
+// A vdev that's CantOpen or below is considered unusable.
+enum VdevState
+{
+	unknown,				// Uninitialized vdev
+	closed,                    // Not currently open
+	offline,                   // Not allowed to open
+	removed,                   // Explicitly removed from system
+	cantOpen,                  // Tried to open, but failed
+	faulted,                   // External request to fault device
+	degraded,                  // Replicated vdev with unhealthy kids
+	healthy,                   // Presumed good
+}
+
+// vdev aux states.  When a vdev is in the CantOpen state, the aux field
+// of the vdev stats structure uses these constants to distinguish why.
+enum VdevAux
+{
+	none,
+	openFailed,				    // ldi_open_*() or vn_open() failed
+	corruptData,                 // bad label or disk contents
+	noReplicas,                  // insufficient number of replicas
+	badGUIDSum,                  // vdev guid sum doesn't match
+	tooSmall,                    // vdev size is too small
+	badLabel,                    // the label is OK but invalid
+	versionNewer,                // on-disk version is too new
+	versionOlder,                // on-disk version is too old
+	unsupFeat,                   // unsupported features
+	spared,                      // hot spare used in another pool
+	errExceeded,                 // too many errors
+	ioFailure,                   // experienced I/O failure
+	badLog,                      // cannot read log chain(s)
+	external,                    // external diagnosis
+	splitPool,                   // vdev was split off into another pool
+}
+
+
+
+struct ZfsErrorResult
+{
+	int num;
+	string text;
+}
+
+
+shared static this()
+{
+	enforce(libzfs_core_init() == 0, "Error initialising ZFS");
+}
+
+shared static ~this()
+{
+	libzfs_core_fini();
+}	
+
+version(None)
+{
+	auto toList(string[string] args)
 	{
-		enforce(libzfs_core_init() == 0, "Error initialising ZFS");
+		nvlist_t** pNvList = nvlist_alloc(nvlistp,1,0); // UNIQUE NAME == 1
+		enforce(pNvList !is null, "nvlist_alloca failed");
+		scope(exit)
+			nvlist_free(pNvList);
+		return dictToNvList(args,pNvList);
 	}
-	~this()
+
+	auto asDict(nv_list* list)
 	{
-		libzfs_core_fini();
-	}	
+		string[string] ret;
+
+		pair = nvlist_next_nvpair(list,null);
+		while (pair !is null)
+		{
+			auto name = nvpair_name(pair).fromCString;
+			auto id = type(pair);
+		}
+	}
+
+	auto type(nvpair* pair)
+	{
+		auto id = nvpair_typie(pair);
+	}
 }
 
-
-void create(string filesystem, DataSetType dataSetType, Property[] properties, ubyte[] wkeyData)
+enum NvType
 {
-	auto result = lzc_create(filesystem.toCString, cast(lzc_dataset_type) dataSetType, properties.asPtr,wkeyData.ptr,wkeyData.length.to!uint_t);
+	unknown = DATA_TYPE_UNKNOWN,
+	boolean = DATA_TYPE_BOOLEAN,
+	byte_ = DATA_TYPE_BYTE,
+	short_ = DATA_TYPE_INT16,
+	ushort_ = DATA_TYPE_UINT16,
+	int_ = DATA_TYPE_INT32,
+	uint_ = DATA_TYPE_UINT32,
+	long_ = DATA_TYPE_INT64,
+	ulong_ = DATA_TYPE_UINT64,
+	string_ = DATA_TYPE_STRING,
+	byteArray = DATA_TYPE_BYTE_ARRAY,
+	shortArray = DATA_TYPE_INT16_ARRAY,
+	ushortArray = DATA_TYPE_UINT16_ARRAY,
+	intArray = DATA_TYPE_INT32_ARRAY,
+	uintArray = DATA_TYPE_UINT32_ARRAY,
+	longArray = DATA_TYPE_INT64_ARRAY,
+	ulongArray = DATA_TYPE_UINT64_ARRAY,
+	stringArray = DATA_TYPE_STRING_ARRAY,
+	hrTime = DATA_TYPE_HRTIME,
+	nvList = DATA_TYPE_NVLIST,
+	nvListArray = DATA_TYPE_NVLIST_ARRAY,
+	booleanValue = DATA_TYPE_BOOLEAN_VALUE,
+	int8 = DATA_TYPE_INT8,
+	uint8 = DATA_TYPE_UINT8,
+	booleanArray = DATA_TYPE_BOOLEAN_ARRAY,
+	int8Array = DATA_TYPE_INT8_ARRAY,
+	uint8Array =  DATA_TYPE_UINT8_ARRAY,
+	double_ = DATA_TYPE_DOUBLE
+}
+
+union ZfsValueUnion
+{
+	bool boolean;
+	byte byte_;
+	char int8Value;
+	ubyte ubyteValue;
+	short short_;
+	ushort ushort_;
+	int int_;
+	uint uint_;
+	long long_;
+	ulong ulong_;
+	string string_;
+	bool[] booleanArray;
+	char[] charArray;
+	ubyte[] ubyteArray;
+	short[] shortArray;
+	ushort[] ushortArray;
+	int[] intArray;
+	uint[] uintArray;
+	long[] longArray;
+	ulong[] ulongArray;
+	string[] stringArray;
+	//hrtime hrTime;
+	//ZfsValue value;
+	//ZfsValue[] valueArray;
+	//ZfsValue[string] valueDict;
+	double double_;
+	ZfsValueUnion[] valueArray;
+	ZfsValueUnion[string] valueDict;
+}
+
+alias ZfsValue = TaggedAlgebraic!ZfsValueUnion;
+
+/+
+nvlist_t* asList(ZfsValue[string] values)
+{
+	foreach(entry;values.byKeyValue)
+	{
+		final switch(entry.value.kind)
+		{
+			case ZfsValue.Kind.valueDict:
+				nvlist_add_nvlist(list,entry.key.toCString,entry.value.asCValue);
+				break;
+	
+			case ZfsValue.Kind.valueArray:
+				nvlist_add_array(list,entry.key.toCString,entry.value.asCValue);
+				break;
+
+			case ZfsValue.
++/
+		
+void create(string filesystem, DatasetType dataSetType, ubyte[] wkeyData)
+{
+	auto props = nvlistAlloc(NV_UNIQUE_NAME, 0);
+	scope(exit)
+		nvlistFree(props);
+	auto result = lzc_create(filesystem.toCString, cast(lzc_dataset_type) dataSetType, props,wkeyData.ptr,wkeyData.length.to!uint_t);
 	enforce(result==0,"something went wrong");
 }
 
-void clone(string filesystem, string origin, Property[] properties)
+void clone(string filesystem, string origin)
 {
-	auto result = lzc_clone(filesystem.toCString,origin.toCString,properties.ptr);
+	auto props = nvlistAlloc(NV_UNIQUE_NAME, 0);
+	scope(exit)
+		nvlistFree(props);
+	auto result = lzc_clone(filesystem.toCString,origin.toCString,props);
 	enforce(result==0,"something went wrong");
 }
 
-void promote(string filesystem, string snapName)
+string promote(string filesystem)
 {
-	auto result = lzc_promote(filesystem.toCString.snapName.ptr,snapName.length);
+	char[16384] buf;
+	auto result = lzc_promote(filesystem.toCString,buf.ptr, buf.length);
 	enforce(result==0,"something went wrong");
+	return buf.ptr.fromCString.idup;
 }
 
 void remap(string filesystem)
@@ -51,33 +539,16 @@ void remap(string filesystem)
 	enforce(result==0,"something went wrong");
 }
 
-auto createSnapshot(Snap[] snapshots, Property[] properties)
-{
-	auto result = lzc_snapshot(snapshots.asPtr,properties.asPtr,errList);
-	enforce(result==0,"something went wrong");
-}
 
-
-auto destroySnapshots(Snap[] snapshots, bool defer)
+ulong snapRangeSpace(string firstSnap, string lastSnap)
 {
-	nvlist_t* errlist;
-	auto result = lzc_destroy_snaps(snapshots.asPtr,defer,&errList);
-	enforce(result==0,"something went wrong");
-}
-
-auto snapRangeSpace(string firstSnap, string lastSnap)
-{
-	auto result = lzc_snaprange_space(firstSnap.toCString, lastSnap.toCstring);
+	ulong ret;
+	auto result = lzc_snaprange_space(firstSnap.toCString, lastSnap.toCString,&ret);
 	enforce(result>=0, "zfs error");
-	return result;
+	return ret;
 }
 
-bool datasetExists(string datasetName)
-{
-	return (lzc_exists(datasetName.toCString) !=0);
-}
-
-
+/+
 auto poolSync(string poolName, NVL[] nvl)
 {
 	// outnvl is unusued
@@ -101,6 +572,7 @@ auto getHeldSnapshots(string snapName)
 {
 	int lzc_get_holds(const char *snapname, nvlist_t **holdsp)
 }
++/
 
 enum SendFlag
 {
@@ -110,53 +582,19 @@ enum SendFlag
 	raw = LZC_SEND_FLAG_RAW
 }
 
-@SILdoc(`
-Generate a zfs send stream for the specified snapshot and write it to
-the specified file descriptor.
- 
-"snapname" is the full name of the snapshot to send (e.g. "pool/fs@snap")
-
-If "from" is NULL, a full (non-incremental) stream will be sent.
-If "from" is non-NULL, it must be the full name of a snapshot or
-bookmark to send an incremental from (e.g. "pool/fs@earlier_snap" or
-"pool/fs#earlier_bmark").  If non-NULL, the specified snapshot or
-bookmark must represent an earlier point in the history of "snapname").
-It can be an earlier snapshot in the same filesystem or zvol as "snapname",
-or it can be the origin of "snapname"'s filesystem, or an earlier
-snapshot in the origin, etc.
-
-"fd" is the file descriptor to write the send stream to.
-
-If "flags" contains LZC_SEND_FLAG_LARGE_BLOCK, the stream is permitted
-to contain DRR_WRITE records with drr_length > 128K, and DRR_OBJECT
-records with drr_blksz > 128K.
-
-If "flags" contains LZC_SEND_FLAG_EMBED_DATA, the stream is permitted
-to contain DRR_WRITE_EMBEDDED records with drr_etype==BP_EMBEDDED_TYPE_DATA,
-which the receiving system must support (as indicated by support
-for the "embedded_data" feature).
-
-If "flags" contains LZC_SEND_FLAG_COMPRESS, the stream is generated by using
-compressed WRITE records for blocks which are compressed on disk and in
-memory.  If the lz4_compress feature is active on the sending system, then
-the receiving system must have that feature enabled as well.
-
-If "flags" contains LZC_SEND_FLAG_RAW, the stream is generated, for encrypted
-datasets, by sending data exactly as it exists on disk.  This allows backups
-to be taken even if encryption keys are not currently loaded.
-`)
-
-auto sendSnapshot(string snapshotName, string fromSnapshot, int fileDescriptor, SendFlag[] flags)
+void sendSnapshot(string snapshotName, string fromSnapshot, int fileDescriptor, SendFlag[] flags)
 {
-	auto lzcFlags = flags.fold!((a,b) => a| b,lzc_send_flags.init);
+	import std.algorithm:fold;
+	auto lzcFlags = flags.fold!((a,b) => a| b)(cast(SendFlag)0).to!lzc_send_flags;
 	auto result = lzc_send(snapshotName.toCString, fromSnapshot.toCString,fileDescriptor,lzcFlags);
 	enforce(result == 0, "zfs error");
 }
 
 auto sendResume(string snapshotName, string fromSnapshot, int fileDescriptor, SendFlag[] flags, ulong resumeObj, ulong resumeOff)
 {
-	auto lzcFlags = flags.fold!((a,b) => a| b,lzc_send_flags.init);
-	auto result = lzc_send_resume(snapshotName.toCString, fromSnapshot.toCstring, fileDescriptor, lzcFlags, resumeObj, resumeOff);
+	import std.algorithm:fold;
+	auto lzcFlags = flags.fold!((a,b) => a| b)(cast(SendFlag)0).to!lzc_send_flags;
+	auto result = lzc_send_resume(snapshotName.toCString, fromSnapshot.toCString, fileDescriptor, lzcFlags, resumeObj, resumeOff);
 	enforce(result == 0, "zfs error");
 }
 
@@ -177,16 +615,19 @@ an equivalent snapshot.
 `)
 auto sendSpace(string snapshotName, string from, SendFlag[] flags)
 {
-	auto lzcFlags = flags.fold!((a,b) => a| b,lzc_send_flags.init);
+	import std.algorithm:fold;
+	auto lzcFlags = flags.fold!((a,b) => a| b)(cast(SendFlag)0).to!lzc_send_flags;
 	ulong retSpace;
-	auto result = lzc_send_space(snapshotName.toCString, from.toCstring, lzcFlags,&retSpace);
+	auto result = lzc_send_space(snapshotName.toCString, from.toCString, lzcFlags,&retSpace);
 	enforce(result == 0, "zfs error");
+	return retSpace;
 }
 
-
+/+
 auto recvRead(int fileDescriptor, ubyte[] buf)
 {
-	auto result = recv_read(fileDescriptor,cast(void*)buf.ptr,buf.length.to!int);
+	import std.format:format;
+	auto result = lzc_recv_read(fileDescriptor,cast(void*)buf.ptr,buf.length.to!int);
 	enforce(result == 0, format!"zfs error: %s"(result));
 }
 
@@ -200,6 +641,8 @@ auto recvRead(int fileDescriptor, ubyte[] buf)
  */
 int recv_impl(const char *snapname, nvlist_t *recvdprops, nvlist_t *localprops, uint8_t *wkeydata, uint_t wkeylen, const char *origin, boolean_t force, boolean_t resumable, boolean_t raw, int input_fd, const dmu_replay_record_t *begin_record, int cleanup_fd, uint64_t *read_bytes, uint64_t *errflags, uint64_t *action_handle, nvlist_t **errors)
 
++/
+
 @SILdoc(`zfs receive:
 The simplest receive case: receive from the specified fd, creating the
 specified snapshot.  Apply the specified properties as "received" properties
@@ -211,21 +654,22 @@ necessary to receive.
 Return 0 on success or an errno on failure.
 
 Note: this interface does not work on dedup'd streams (those with DMU_BACKUP_FEATURE_DEDUP).
+
+resumable: Like lzc_receive, but if the receive fails due to premature stream termination, the intermediate state will be preserved on disk.  In this case, ECKSUM will be returned.  The receive may subsequently be resumed with a resuming send stream generated by lzc_send_resume().
 `)
-auto zfsReceive(string snapName, Property[] properties, string origin, bool force, bool raw, int fileDescriptor)
+auto zfsReceive(string snapName, string origin, bool force, bool raw, int fileDescriptor, bool resumable = false)
 {
-	auto result = lzc_receive(snapName.toCString, properties.asPtr,origin.toCString, force? 1:0, raw?1:0, fileDescriptor);
+	import std.format:format;
+	// TODO: For now, we let the properties to be empty.
+	auto props = nvlistAlloc(NV_UNIQUE_NAME, 0);
+	scope(exit)
+		nvlistFree(props);
+	auto result = resumable ? lzc_receive(snapName.toCString, props,origin.toCString, force? 1:0, raw?1:0, fileDescriptor) :
+			lzc_receive_resumable(snapName.toCString, props,origin.toCString, force?1:0, raw? 1:0, fileDescriptor);
+	enforce(result == 0, format!"zfs error: %s"(result));
 }
 
-*
- * Like lzc_receive, but if the receive fails due to premature stream
- * termination, the intermediate state will be preserved on disk.  In this
- * case, ECKSUM will be returned.  The receive may subsequently be resumed
- * with a resuming send stream generated by lzc_send_resume().
- */
-int
-lzc_receive_resumable(const char *snapname, nvlist_t *props, const char *origin,
-    boolean_t force, boolean_t raw, int fd)
+/+
 /*
  * Like lzc_receive, but allows the caller to read the begin record and then to
  * pass it in.  That could be useful if the caller wants to derive, for example,
@@ -285,6 +729,7 @@ auto zfsReceiveWithCommandProperties(string snapName, Property[] properties, Pro
 	enforce(result == 0, format!"zfs error %s"(result));
 }
 
++/
 
 @SILdoc(`Roll back this filesystem or volume to its most recent snapshot
 If snapnamebuf is not NULL, it will be filled in with the name
@@ -295,19 +740,24 @@ to roll back to a specific latest snapshot.
 
 Return 0 on success or an errno on failure.
 `)
-auto rollback(string fsname, string snapName)
+string rollback(string fsname)
 {
-	auto result = lzc_rollback(fsname.toCString, snapName.ptr, snapName.length.to!int);
-	enforce(result ==0, "zfs error");
+	import std.format:format;
+	char[16384] buf;
+	auto result = lzc_rollback(fsname.toCString, buf.ptr, buf.length.to!int);
+	enforce(result ==0, format!"libzfs_core error %s rolling back on %s"(result,fsname));
+	return buf.ptr.fromCString.idup;
 }
 
 @SILdoc(`Roll back this filesystem or volume to the specified snapshot, if possible`)
 void rollbackTo(string fsName, string snapName)
 {
+	import std.format:format;
 	auto result = lzc_rollback_to(fsName.toCString, snapName.toCString);
 	enforce(result == 0, format!"zfs error: %s"(result));
 }
 
+/+
 @SILdoc(`Creates bookmarks.
 
 The bookmarks nvlist maps from name of the bookmark (e.g. "pool/fs#bmark") to
@@ -420,6 +870,7 @@ void executeChannelProgram(string pool, string program, ulong instrLimit, ulong 
 	enforce(result == 0, format!"zfs error: %s"(result));
 }
 
++/
 
 @SILdoc(`Creates a checkpoint for the specified pool.
 
@@ -443,8 +894,9 @@ This method may also return:
  	One or more top-level vdevs exceed the maximum vdev size
  	supported for this feature.
 `)
-auto createCheckpoint(string pool)
+void createCheckpoint(string pool)
 {
+	import std.format:format;
 	auto result = lzc_pool_checkpoint(pool.toCString);
 	enforce(result == 0, format!"zfs error: %s"(result));
 }
@@ -455,8 +907,12 @@ void discardCheckpoint(string pool)
 	auto result = lzc_pool_checkpoint_discard(pool.toCString);
 	enforce(result != ZFS_ERR_NO_CHECKPOINT, "The pool does not have a checkpoint.");
 	enforce(result != ZFS_ERR_DISCARDING_CHECKPOINT, "ZFS is already in the middle of discarding the checkpoint.");
+	enforce(result != ZFS_ERR_CHECKPOINT_EXISTS, "ZFS checkpoint already exists");
+	//enforce(result != ZFS_DEVRM_IN_PROGRESS,"A vdev is currently being removed");
+	//enforce(result != ZFS_VDEV_TOO_BIG,"One or more top-level vdevs exceed max vdev size supported for this feature");
 }
 
+/+
 @SILdoc(`
 Executes a read-only channel program.
 
@@ -477,6 +933,7 @@ auto executeChannelProgramNoSync(string pool, string program, ulong timeout, ulo
 	return NvList(outnvl);
 }
 
++/
 /*
  * Performs key management functions
  *
@@ -484,42 +941,28 @@ auto executeChannelProgramNoSync(string pool, string program, ulong timeout, ulo
  * load or change a wrapping key, the key should be specified in the
  * hidden_args nvlist so that it is not logged.
  */
-int lzc_load_key(const char *fsname, boolean_t noop, uint8_t *wkeydata, uint_t wkeylen)
+// int lzc_load_key(const char *fsname, boolean_t noop, uint8_t *wkeydata, uint_t wkeylen)
 
-auto loadKey(string fsName, bool noOp, ubyte wkeyData)
+auto loadKey(string fsName, bool noOp, ubyte[] wkeyData)
 {
-	auto result = lzc_load_key(fsName.toCString, noOp, wkeyData.ptr, wkeyData.length);
+	import std.format:format;
+	auto result = lzc_load_key(fsName.toCString, noOp ? 1 : 0, wkeyData.ptr, wkeyData.length.to!uint);
+	enforce(result ==0, format!"loadkey failed with %s"(result));
 }
 
-auto unloadKey(string fsName)
+void unloadKey(string fsName)
 {
-int lzc_unload_key(const char *fsname)
-{
-	return (lzc_ioctl(ZFS_IOC_UNLOAD_KEY, fsname, NULL, NULL));
+	import std.format:format;
+	auto result = lzc_unload_key(fsName.toCString);
+	enforce(result ==0, format!"unLoadkey failed with %s"(result));
 }
 
-int
-lzc_change_key(const char *fsname, uint64_t crypt_cmd, nvlist_t *props,
-    uint8_t *wkeydata, uint_t wkeylen)
 
-int
-lzc_reopen(const char *pool_name, boolean_t scrub_restart)
-{
+// int lzc_change_key(const char *fsname, uint64_t crypt_cmd, nvlist_t *props, uint8_t *wkeydata, uint_t wkeylen)
+// int lzc_reopen(const char *pool_name, boolean_t scrub_restart)
 
 
 
-enum DataSetType
-{
-	zfs = lzc_dataset_type.LZC_DATASET_TYPE_ZFS,
-	zvol = lzc_dataset_type.LZC_DATASET_TYPE_ZVOL,
-}
-
-void snapshot(DataSet dataSet, Snap[] snaps, Properties[] properties)
-{
-	auto result = lzc_snapshot(snaps.asPtr, properties.asPtr, null);
-	enforce(result ==0, "Error creating snapshot");
-}
-	
 // clone
     // promote
     // destroy_snaps
@@ -543,237 +986,178 @@ void snapshot(DataSet dataSet, Snap[] snaps, Properties[] properties)
     // rollback_to
     // sync
 
-
 // TODO Find a better way to find it via zfs lib
-string version()
+string zfsVersion()
 {
-	if o, err := exec.Command("modinfo", "zfs").Output(); err == nil {
-		// Dumps a lot of info here, just split it at new line
-		res := strings.Split(string(o), "\n")
+	import std.process: executeShell;
+	import std.string: splitLines, startsWith, strip, join;
+	import std.algorithm: filter;
+	import std.format:format;
 
-		for _, r := range res {
-			// ZFS version information starts with 'version:' so look for that
-			if strings.HasPrefix(r, "version:") {
-				// Get the version and return
-				return strings.TrimSpace(strings.TrimLeft(r, "version:"))
-			}
-		}
-	}
-
-	// Didn't find the version info
-	return ""
+	auto result = executeShell("modinfo zfs");
+	enforce(result.status == 0, result.output);
+	auto lines = result.output.splitLines.filter!(line => line.startsWith("version:"));
+	return lines.front.strip;
 }
 
 
 // Clone from a snapshot. Wrapper for the libzfs_clone.
 // TODO: the properties arg are ignored for now, which should be reintroduced.
-func clone(dest string, src string, autoMount datalayer.MountType) error {
-	props, err := nvlistAlloc(C.NV_UNIQUE_NAME, 0)
-	if err != nil {
-		return err
-	}
-
-	defer nvlistFree(props)
-	cdest, csrc := C.CString(dest), C.CString(src)
-	defer C.free(unsafe.Pointer(cdest))
-	defer C.free(unsafe.Pointer(csrc))
-	ret := C.lzc_clone(cdest, csrc, props)
-	if ret != 0 {
-		return fmt.Errorf("Failed libzfs_core clone: %d", ret)
-	}
-
-	return nil
+// add automount
+void cloneSnapshot(string from, string target)
+{
+	import std.format:format;
+	auto props = nvlistAlloc(NV_UNIQUE_NAME, 0);
+	scope(exit)
+		nvlistFree(props);
+	auto result = lzc_clone(target.toCString, from.toCString, props);
+	enforce(result ==0, format!"failed clone: %s %s %s"(from,target,result));
 }
 
 // Exists examine whether the given path to a snapshot exists. Wrapper to the
 // lzc_exists.
-func exists(path string) bool {
-	cpath := C.CString(path)
-	defer C.free(unsafe.Pointer(cpath))
-
-	// The return type from lzc_exists is boolean_t. Although
-	// conceptually, it is equivalent of the golang bool type, the type is
-	// not considered to be matching. Therefore, we need to do the clumpsy
-	// way of comparing it to the B_TURE value to convert the returned
-	// value to golang bool type.
-	return (C.lzc_exists(cpath) == C.B_TRUE)
+bool snapshotExists(string path)
+{
+	return lzc_exists(path.toCString) !=0;
 }
 
-// Snapshot takes snapshots. Wrapper for lzc_snapshot.
-func snapshot(snapshotNames []string) error {
-	snapshots, err := nvlistAlloc(C.NV_UNIQUE_NAME, 0)
-	if err != nil {
-		return err
-	}
 
-	defer nvlistFree(snapshots)
-	for _, ssName := range snapshotNames {
-		err := nvlistAddBoolean(snapshots, ssName)
-		if err != nil {
-			return err
-		}
+// Snapshot takes snapshots. Wrapper for lzc_snapshot.
+void snapshot(string[] snapshotNames)
+{
+	import std.format:format;
+	import std.string: join;
+	auto snapshots = nvlistAlloc(NV_UNIQUE_NAME, 0);
+	foreach(name;snapshotNames)
+	{
+		nvlistAddBoolean(snapshots,name);
 	}
 
 	// TODO: For now, we let the properties to be empty.
-	props, err := nvlistAlloc(C.NV_UNIQUE_NAME, 0)
-	if err != nil {
-		return err
-	}
+	auto props = nvlistAlloc(NV_UNIQUE_NAME, 0);
+	scope(exit)
+		nvlistFree(props);
 
-	defer nvlistFree(props)
-	var errList *C.nvlist_t
-	ret := C.lzc_snapshot(snapshots, props, &errList)
-	if ret != 0 {
-		ret2 := processErrorList(errList)
-		if ret2 != nil {
-			return ret2
-		}
-		return fmt.Errorf("Failed libzfs_core snapshot: %d", ret)
+	nvlist_t* errList;
+	auto result = lzc_snapshot(snapshots, props, &errList);
+	if  (result != 0)
+	{
+		auto ret2 = processErrorList(errList);
+		enforce(ret2.length ==0, format!" failed libzfs_core snapshot: %s, %s"(snapshotNames,ret2.join(",")));
 	}
-	return nil
 }
 
-// DestroySnapshot destroies the snapshots passed in. Wrapper for lzc_destroy_snaps
-void destroySnapshot(string[] snapshotNames, bool deferDelete)
+// DestroySnapshot destroys the snapshots passed in. Wrapper for lzc_destroy_snaps
+void destroySnapshots(string[] snapshotNames, bool deferDelete)
 {
-	snapshots, err := nvlistAlloc(C.NV_UNIQUE_NAME, 0)
-	if err != nil {
-		return err
+	import std.format:format;
+	import std.string:join;
+	auto snapshots = nvlistAlloc(NV_UNIQUE_NAME, 0);
+	scope(exit) nvlistFree(snapshots);
+	foreach(name;snapshotNames)
+	{
+		nvlistAddBoolean(snapshots, name);
 	}
 
-	defer nvlistFree(snapshots)
-	for _, ssName := range snapshotNames {
-		err := nvlistAddBoolean(snapshots, ssName)
-		if err != nil {
-			return err
-		}
+	nvlist_t* errList;
+	boolean_t cdeferDelete = (deferDelete) ? 1 : 0;
+	auto result =  lzc_destroy_snaps(snapshots, cdeferDelete, &errList);
+	if  (result != 0)
+	{
+		auto ret2 = processErrorList(errList);
+		enforce(ret2.length ==0, format!" failed libzfs_core snapshot: %s, %s"(snapshotNames,ret2.join(",")));
 	}
-
-	var errList *C.nvlist_t
-	var cdeferDelete C.boolean_t
-	// This is not exactly clean, but since the input needs to be a
-	// C.boolean_t, there is no easy translation between golang bool
-	// type into the C type.
-	if deferDelete {
-		cdeferDelete = C.B_TRUE
-	} else {
-		cdeferDelete = C.B_FALSE
-	}
-
-	ret := C.lzc_destroy_snaps(snapshots, cdeferDelete, &errList)
-	if ret != 0 {
-		ret2 := processErrorList(errList)
-		if ret2 != nil {
-			return ret2
-		}
-		return fmt.Errorf("Failed libzfs_core snapshot: %d", ret)
-	}
-	return nil
 }
 
-// Destroy is the wrapper for lzc_destroy_one
-void destroy(string name)
+// NvlistAlloc is a wrapper for nvlist_alloc.
+nvlist_t* nvlistAlloc(uint nvflag, int kmflag)
 {
-	cname := C.CString(name)
-	defer C.free(unsafe.Pointer(cname))
-	// The only allowed property is the defer, but we leave it empty for
-	// now
-	props, err := nvlistAlloc(C.NV_UNIQUE_NAME, 0)
-	if err != nil {
-		return err
-	}
-
-	defer nvlistFree(props)
-	ret := C.lzc_destroy_one(cname, props)
-	if ret != 0 {
-		return fmt.Errorf("Failed to destroy '%s': %d", name, ret)
-	}
-
-	return nil
+	nvlist_t* cnvlist;
+	auto result = nvlist_alloc(&cnvlist, nvflag, kmflag);
+	enforce(result ==0, "failed to allocate nvlist");
+	return cnvlist;
 }
 
-// List is the wrapper for lzc_list_iter
-func list(zpool string) ([]string, error) {
-	// TODO: Not Implemented
-	return nil, fmt.Errorf("Not Implemented")
+// NvlistFree is a wrapper for nvlist_free.
+void nvlistFree(nvlist_t* cnvlist)
+{
+	nvlist_free(cnvlist);
 }
+
+@SILdoc(`Destroy is the wrapper for lzc_destroy`)
+ZfsResult destroy(string name)
+{
+	import std.format:format;
+	auto result = lzc_destroy(name.toCString);
+	return zfsResult(result==0, ZfsError.noent, format!"failed to destroy %s: %s"(name,result));
+}
+
 
 // Process the error list returned from the libzfs_core functions in the types
 // of nvlist_t. The keys are the snapshot names that failed and the values are
 // the errno corresponding to each failed snapshot.
-void processErrorList(errList *C.nvlist_t)
+string[] processErrorList(nvlist_t* errList)
 {
-	if nvlistEmpty(errList) {
-		return nil
+	import std.format:format;
+	string[] ret;
+	if (isNvlistEmpty(errList)) {
+		return ret;
 	}
 
 	scope(exit)
-		nvlistFree(errList)
-	var elem *C.nvpair_t
-	var errno C.int32_t
-	for {
-		elem = C.nvlist_next_nvpair(errList, elem)
-		if elem == nil {
-			break
-		}
-
-		s := C.nvpair_name(elem)
-		C.nvpair_value_int32(elem, &errno)
-		log.Printf("Failed Snapshot '%s':%d\n", C.GoString(s), int(errno))
+		nvlistFree(errList);
+	int errNum;
+	nvpair_t* elem = nextNvPair(errList);
+	while(elem !is null)
+	{
+		auto s = nvpair_name(elem).fromCString;
+		nvpair_value_int32(elem, &errNum);
+		ret ~= format!"Failed Snapshot '%s':%s"(s,errNum);
+		elem = nvlist_next_nvpair(errList, elem);
 	}
-
-	return fmt.Errorf("ZFS core Lib returned error")
+	return ret;
 }
 
-// NvlistAlloc is a wrapper for nvlist_alloc.
-func nvlistAlloc(nvflag int, kmflag int) (*C.nvlist_t, error) {
-	var cnvlist *C.nvlist_t
-	ret := C.nvlist_alloc(&cnvlist, C.uint_t(nvflag), C.int(kmflag))
-	if ret != 0 {
-		return nil, fmt.Errorf("Failed to allocation nvlist")
-	}
 
-	return cnvlist, nil
+nvpair_t* nextNvPair(nvlist_t* list, nvpair_t* elemArg = null)
+{
+	nvpair_t* elem;
+	if (elemArg !is null)
+		elem = elemArg;
+	elem = nvlist_next_nvpair(list, elem);
+	return elem;
 }
 
-// NvlistFree is a wrapper for nvlist_free.
-func nvlistFree(cnvlist *C.nvlist_t) {
-	C.nvlist_free(cnvlist)
-}
 
 // NvlistAddBoolean is a wrapper for nvlist_add_boolean.
-func nvlistAddBoolean(cnvlist *C.nvlist_t, name string) error {
-	cname := C.CString(name)
-	defer C.free(unsafe.Pointer(cname))
-	errno := C.nvlist_add_boolean(cnvlist, cname)
-	if errno != 0 {
-		return fmt.Errorf("Failed to add boolean: %d", errno)
-	}
-
-	return nil
-}
-
-// NvlistEmpty is a wrapper for nvlist_empty.
-func nvlistEmpty(cnvlist *C.nvlist_t) bool {
-	return (C.nvlist_empty(cnvlist) == C.B_TRUE)
-}
-
-void createFileSystem(string path)
+void nvlistAddBoolean(nvlist_t* nvlist, string name)
 {
-	props, err := nvlistAlloc(C.NV_UNIQUE_NAME, 0)
-	if err != nil {
-		return err
-	}
-	defer nvlistFree(props)
+	import std.format:format;
+	auto errnoResult = nvlist_add_boolean(nvlist, name.toCString);
+	enforce(errnoResult ==0, format!"Failed to add boolean: %s"(errnoResult));
+}
+// NvlistEmpty is a wrapper for nvlist_empty.
+bool isNvlistEmpty(nvlist_t* cnvlist)
+{
+	return (nvlist_empty(cnvlist) !=0);
+}
 
-	cpath := C.CString(path)
-	defer C.free(unsafe.Pointer(cpath))
 
-	ret := C.lzc_create(cpath, C.LZC_DATSET_TYPE_ZFS, props)
-	if ret != 0 {
-		return fmt.Errorf("Failed libzfs_core create: %d", ret)
-	}
-	return nil
+//void create(string filesystem, DataSetType dataSetType, Property[] properties, ubyte[] wkeyData)
+// lzc_create(filesystem.toCString, cast(lzc_dataset_type) dataSetType, properties.asPtr,wkeyData.ptr,wkeyData.length.to!uint_t);
+
+void createFileSystem(string path, void* datasetType=null, void* properties=null, ubyte[] wkeyData =[])
+{
+	import std.format:format;
+	auto props = nvlistAlloc(NV_UNIQUE_NAME, 0);
+	enforce(props !is null, "alloc failure for props for "~path );
+	scope(exit)
+		nvlistFree(props);
+
+	auto cpath = path.toCString;
+
+	auto result = lzc_create(cpath, LZC_DATSET_TYPE_ZFS, props,null,0);
+	enforce(result ==0, format!"Failed libzfs_core create: %s"(result));
 }
 
 void destroyFileSystem(string path)
@@ -781,22 +1165,49 @@ void destroyFileSystem(string path)
 	throw new Exception("Not implemented");
 }
 
-auto getSnapshotSpace(datalayer.SnapshotSpace)
+auto getSnapshotSpace() // datalayer.SnapshotSpace)
 {
 	throw new Exception("Not implemented");
 }
 
-auto getFSAndDescendantsSpace(fs string) (datalayer.DiskSpace, error) {
+auto getFSAndDescendantsSpace(string fs)
+{
 	// TODO: complete this code
-	return datalayer.DiskSpace{}, fmt.Errorf("Not Implemented")
+	// return datalayer.DiskSpace{}, fmt.Errorf("Not Implemented")
 }
 
-void validate(string zpool)
+ZfsResult validate(string zpool)
 {
+	import std.file:exists;
+	import std.process:executeShell;
+	import std.exception;
+	import std.format:format;
 	auto result = executeShell("modprobe zfs");
 	enforce(result.status==0, "ZFS Kernel module not found");
-
-	if !exists(filepath.Join([]string{"", zpool})) {
-		return &ErrZpoolNotFound{Zpool: zpool}
-	}
+	return zfsResult(exists(zpool), ZfsError.noent, format!"pool %s not found"(zpool));
 }
+
+struct ZfsResult
+{
+	ZfsError status;
+	string message;
+}
+
+auto zfsResult(bool success, ZfsError status, string message)
+{
+	return success ? ZfsResult(ZfsError.success,"") : ZfsResult(status,message);
+}
+
+
+void main(string[] args)
+{
+	import std.stdio;
+	//auto result = validate("tank3");
+	// writeln(result);
+	auto testSnap = ["tank3/shared/kaleidic@snapfoo"];
+	snapshot(testSnap);
+	writeln("success creating");
+	destroySnapshots(testSnap,false);
+	writeln("success destroying");
+}
+
