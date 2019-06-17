@@ -4083,12 +4083,6 @@ alias fromCString = fromStringz;
 
 struct SILdoc {string value; }
 
-void rename(string from, string to)
-{
- auto result = lzc_rename(from.toCString, to.toCString);
- enforce(result==0,"something went wrong");
-}
-
 
 extern(C) int lzc_destroy_one(const(char) *fsname, nvlist_t *);
 extern(C) int lzc_inherit(const(char)*fsname, const(char)*name, nvlist_t *);
@@ -4576,17 +4570,17 @@ Params:
 Errors:
  FilesystemExists - if a dataset with the given name already exists
  ParentNotFound - if a parent dataset of the requested dataset does not exist
- Propertsource/symmetry/api/libzfs_core.d.tmp:6349:67: warning: missing terminating ' character
+ PropertyInvalid - if one or more of specified properties does not exist or has an invalid type or value
+ NameInvalid - if the name is not a valid datsource/symmetry/api/libzfs_core.d.tmp:6343:67: warning: missing terminating ' character
      NameTooLong: if the dataset name is too longor  if the dataset's origin has a snapshot that, if transferred to the dataset, would get a too long name.
                                                                    ^
-source/symmetry/api/libzfs_core.d.tmp:6352:98: warning: missing terminating ' character
+source/symmetry/api/libzfs_core.d.tmp:6346:98: warning: missing terminating ' character
      SnapshotExists: if the dataset already has a snapshot with the same name as one of the origin's snapshots.
                                                                                                   ^
-source/symmetry/api/libzfs_core.d.tmp:6372:38: warning: missing terminating ' character
+source/symmetry/api/libzfs_core.d.tmp:6366:38: warning: missing terminating ' character
      FilesystemNotFound: if the target's parent does not exist.
                                       ^
-yInvalid - if one or more of specified properties does not exist or has an invalid type or value
- NameInvalid - if the name is not a valid dataset name
+aset name
  NameTooLong - if the name is too long
  WrongParent - if the parent dataset of the requested dataset is not a filesystem eg zvol
 `)

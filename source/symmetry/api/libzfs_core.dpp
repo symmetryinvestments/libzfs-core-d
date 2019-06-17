@@ -21,12 +21,6 @@ alias fromCString = fromStringz;
 
 struct SILdoc {string value; }
 
-void rename(string from, string to)
-{
-	auto result = lzc_rename(from.toCString, to.toCString);
-	enforce(result==0,"something went wrong");
-}
-
 // extern(C) void nvlist_free(nvlist_t*);
 extern(C) int lzc_destroy_one(const(char) *fsname, nvlist_t *);
 extern(C) int lzc_inherit(const(char)*fsname, const(char)*name, nvlist_t *);
