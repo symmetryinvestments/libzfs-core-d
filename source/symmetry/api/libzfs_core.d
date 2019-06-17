@@ -2578,11 +2578,11 @@ extern(C)
     int fseek(_IO_FILE*, c_long, int) @nogc nothrow;
     c_ulong fwrite_unlocked(const(void)*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
     c_ulong fread_unlocked(void*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
-    //c_ulong fwrite(const(void)*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
+    c_ulong fwrite(const(void)*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
     c_ulong fread(void*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
     int ungetc(int, _IO_FILE*) @nogc nothrow;
     int puts(const(char)*) @nogc nothrow;
-    //int fputs(const(char)*, _IO_FILE*) @nogc nothrow;
+    int fputs(const(char)*, _IO_FILE*) @nogc nothrow;
     c_long getline(char**, c_ulong*, _IO_FILE*) @nogc nothrow;
     c_long getdelim(char**, c_ulong*, int, _IO_FILE*) @nogc nothrow;
     struct re_pattern_buffer
@@ -2659,10 +2659,10 @@ extern(C)
     int getw(_IO_FILE*) @nogc nothrow;
     int putchar_unlocked(int) @nogc nothrow;
     int putc_unlocked(int, _IO_FILE*) @nogc nothrow;
-    //int fputc_unlocked(int, _IO_FILE*) @nogc nothrow;
+    int fputc_unlocked(int, _IO_FILE*) @nogc nothrow;
     int putchar(int) @nogc nothrow;
     int putc(int, _IO_FILE*) @nogc nothrow;
-    //int fputc(int, _IO_FILE*) @nogc nothrow;
+    int fputc(int, _IO_FILE*) @nogc nothrow;
     alias fpos_t = _G_fpos_t;
     int fgetc_unlocked(_IO_FILE*) @nogc nothrow;
     int getchar_unlocked() @nogc nothrow;
@@ -4090,6 +4090,10 @@ void rename(string from, string to)
 }
 
 
+extern(C) int lzc_destroy_one(const(char) *fsname, nvlist_t *);
+extern(C) int lzc_inherit(const(char)*fsname, const(char)*name, nvlist_t *);
+extern(C) int lzc_set_props(const(char)*, nvlist_t *, nvlist_t *, nvlist_t *);
+extern(C) int lzc_list(const(char)*, nvlist_t*);
 
 enum DatasetType
 {
@@ -4572,16 +4576,19 @@ Params:
 Errors:
  FilesystemExists - if a dataset with the given name already exists
  ParentNotFound - if a parent dataset of the requested dataset does not exist
- PropertyInvalid - if one or more of specified properties does not exist or has an invalid type or value
- NameInvalid - if the name is not a valid dataset name
- NameTooLong - if the name is too long
- WrongParent - if the parent dataset of the requested dataset is not a filesyssource/symmetry/api/libzfs_core.d.tmp:6345:67: warning: missing terminating ' character
+ Propertsource/symmetry/api/libzfs_core.d.tmp:6349:67: warning: missing terminating ' character
      NameTooLong: if the dataset name is too longor  if the dataset's origin has a snapshot that, if transferred to the dataset, would get a too long name.
                                                                    ^
-source/symmetry/api/libzfs_core.d.tmp:6348:98: warning: missing terminating ' character
+source/symmetry/api/libzfs_core.d.tmp:6352:98: warning: missing terminating ' character
      SnapshotExists: if the dataset already has a snapshot with the same name as one of the origin's snapshots.
                                                                                                   ^
-tem eg zvol
+source/symmetry/api/libzfs_core.d.tmp:6372:38: warning: missing terminating ' character
+     FilesystemNotFound: if the target's parent does not exist.
+                                      ^
+yInvalid - if one or more of specified properties does not exist or has an invalid type or value
+ NameInvalid - if the name is not a valid dataset name
+ NameTooLong - if the name is too long
+ WrongParent - if the parent dataset of the requested dataset is not a filesystem eg zvol
 `)
 void create(string name, DatasetType dataSetType, string[string] properties = (string[string]).init, ubyte[] encryptionKey =[])
 {
@@ -4637,6 +4644,26 @@ string promote(string name)
  auto result = lzc_promote(name.toCString,buf.ptr, buf.length);
  enforce(result==0,"something went wrong");
  return buf.ptr.fromCString.idup;
+}
+
+@SILdoc(`Rename the ZFS dataset.
+Params:
+ string from: the current name of the dataset to rename.
+ string to: the new name of the dataset.
+
+Errors:
+    NameInvalid: if either the source or target name is invalid.
+    NameTooLong: if either the source or target name is too long.
+    NameTooLong: if a snapshot of the source would get a too long name after renaming.
+    FilesystemNotFound: if the source does not exist.
+    FilesystemNotFound: if the target's parent does not exist.
+    FilesystemExists: if the target already exists.
+    PoolsDiffer: if the source and target belong to different pools.
+`)
+void rename(string from, string to)
+{
+ auto result = lzc_rename(from.toCString, to.toCString);
+ enforce(result==0,"something went wrong");
 }
 
 @SILdoc(`Remaps the ZFS dataset.
@@ -4749,13 +4776,13 @@ Params:
 Returns:
  ulong[string] holds on the snapshots along with their creation times in seconds since the epoch
 `)
-auto getHeldSnapshots(string snapName)
+ulong[string] getHeldSnapshots(string snapName)
 {
  import std.format:format;
  nvlist_t* holdsp;
  auto result = lzc_get_holds(snapName.toCString, &holdsp);
  enforce(result ==0, format!"error during getHeldSnapshots: %s"(result));
- return holdsp;
+ return holdsp.processNvlist!(ulong[string]);
 }
 
 enum SendFlag
@@ -4951,7 +4978,7 @@ auto zfsReceiveWithCommandProperties(string snapName, string[string] properties,
 
 
 @SILdoc(`Roll back this filesystem or volume to its most recent snapshot
-If snapnamebuf is not (cast(void*)0), it will be filled in with the name of the most recent snapshot. Note that the latest snapshot may change if a new one is concurrently created or the current one is destroyed. lzc_rollback_to can be used to roll back to a specific latest snapshot.`)
+returns the name of the most recent snapshot. Note that the latest snapshot may change if a new one is concurrently created or the current one is destroyed. lzc_rollback_to can be used to roll back to a specific latest snapshot.`)
 string rollback(string fsname)
 {
  import std.format:format;
@@ -5014,13 +5041,15 @@ The format of the returned nvlist as follows:
     }
   }
 `)
-auto getBookmarks(string fsName, string[] properties)
+ulong[string][string] getBookmarks(string fsName, string[] properties)
 {
  nvlist_t* bmarks;
  auto props = getList(properties);
+ scope(exit)
+  nvlistFree(props);
  auto result = lzc_get_bookmarks(fsName.toStringz, props,&bmarks);
  enforce(result == 0, "ZFS error");
- return bmarks;
+ return bmarks.processNvlist!(ulong[string][string]);
 }
 
 @SILdoc(`Destroys bookmarks
@@ -5133,7 +5162,6 @@ void discardCheckpoint(string pool)
 
 }
 
-/+
 @SILdoc(`
 Executes a read-only channel program.
 
@@ -5153,11 +5181,11 @@ void executeChannelProgramNoSync(string pool, string program, string[string] par
  scope(exit)
   nvlistFree(params);
  nvlist_t* outnvl;
- auto result = lzc_channel_program_nosync(pool.toCString, program.toCString, timeout, memLimit, params, &outnvl);
+ auto result = lzc_channel_program_nosync(pool.toCString, program.toCString, instrLimit, memLimit, params, &outnvl);
  enforce(result == 0, format!"zfs error: %s"(result));
 }
 
-+/
+
 @SILdoc(`Load or verify encryption key on the specified dataset.
 Params:
  string fsName: the name of the dataset
@@ -5323,7 +5351,6 @@ Errors:
 note:
     SnapshotDestructionFailure is a compound exception that provides at least one detailed error object in SnapshotDestructionFailure.errors list. Typical error is SnapshotIsCloned if defer is False. The snapshot names are validated quite loosely and invalid names are typically ignored as nonexisiting snapshots. A snapshot name referring to a filesystem that doesnt exist is ignored. However, non-existent pool name causes PoolNotFound.
 `)
-
 void destroySnapshots(string[] snapshotNames, bool deferDelete)
 {
  import std.format:format;
@@ -5336,8 +5363,318 @@ void destroySnapshots(string[] snapshotNames, bool deferDelete)
  if (result != 0)
  {
   auto ret2 = processErrorList(errList);
-  enforce(ret2.length ==0, format!" failed libzfs_core snapshot: %s, %s"(snapshotNames,ret2.join(",")));
+  enforce(ret2.length ==0, format!"failed libzfs_core snapshot: %s, %s"(snapshotNames,ret2.join(",")));
  }
+}
+
+@SILdoc(`Destroy the ZFS dataset.
+Params:
+ string datasetName: the name of the dataset to destroy.
+
+Errors:
+    NameInvalid: if the dataset name is invalid.
+    NameTooLong: if the dataset name is too long.
+    FilesystemNotFound: if the dataset does not exist.
+`)
+void destroyDataset(string datasetName)
+{
+ import std.string:join;
+ import std.format:format;
+ nvlist_t* errList;
+    auto result = lzc_destroy_one(datasetName.toCString,null);
+ if (result != 0)
+ {
+  auto ret2 = processErrorList(errList);
+  enforce(ret2.length ==0, format!"failed libzfs_core snapshot: %s, %s"(datasetName,ret2.join(",")));
+ }
+}
+
+
+@SILdoc(`Inherit properties from a parent dataset of the given ZFS dataset.
+Params:
+ string name: the name of the dataset.
+ string prop: the name of the property to inherit.
+
+Errors:
+ NameInvalid: if the dataset name is invalid.
+ NameTooLong: if the dataset name is too long.
+ DatasetNotFound: if the dataset does not exist.
+ PropertyInvalid: if one or more of the specified properties is invalid or has an invalid type or value.
+
+Inheriting a property actually resets it to its default value or removes it if its a user property, so that the property could be inherited if its inheritable. If the property is not inheritable then it would just have its default value. This function can be used on snapshots to inherit user defined properties.
+`)
+void inheritProperties(string name, string property)
+{
+ import std.format:format;
+ import std.string:join;
+ nvlist_t* errList;
+    auto result = lzc_inherit(name.toCString, property.toCString, null);
+ if (result != 0)
+ {
+  auto ret2 = processErrorList(errList);
+  enforce(ret2.length ==0, format!" failed libzfs_core inheritProperties: %s, %s, %s"(name,property,ret2.join(",")));
+ }
+}
+
+
+@SILdoc(`Set properties of the ZFS dataset.
+Params:
+ string name: the name of the dataset.
+ string[string]: properties
+
+Errors:
+ NameInvalid: if the dataset name is invalid.
+ NameTooLong: if the dataset name is too long.
+ DatasetNotFound: if the dataset does not exist.
+ NoSpace: if the property controls a quota and the values is too small for that quota.
+ PropertyInvalid: if one or more of the specified properties is invalid or has an invalid type or value.
+    This function can be used on snapshots to set user defined properties.
+
+note:
+ An attempt to set a readonly / statistic property is ignored without reporting any error.
+`)
+void setDatasetProperties(string name, string[string] properties)
+{
+ import std.format:format;
+ import std.string:join;
+ nvlist_t* errList;
+    auto props = getProperties(properties);
+ scope(exit)
+  nvlistFree(props);
+    auto result = lzc_set_props(name.toCString, props, null,null);
+ if (result != 0)
+ {
+  auto ret2 = processErrorList(errList);
+  enforce(ret2.length ==0, format!" failed to set properties: %s, %s, %s"(name,properties,ret2.join(",")));
+ }
+}
+
+struct PipePair
+{
+ int read;
+ int write;
+}
+
+@SILdoc(`List subordinate elements of the given dataset.
+This function can be used to list child datasets and snapshots of the given dataset. The listed elements can be filtered by their type and by their depth relative to the starting dataset. :param bytes name: the name of the dataset to be listed, could be a snapshot or a dataset.
+
+Params:
+ options: a dict of the options that control the listing behavior.
+
+Returns:
+ PipePair - a pair of file descriptors the first of which can be used to read the listing.
+
+Errors:
+ DatasetNotFound: if the dataset does not exist.
+
+Two options are currently available:
+recurse : integer or None
+ specifies depth of the recursive listing. If None the depth is not limited. Absence of this option means that only the given dataset is listed.
+type : dict of bytes:None
+ specifies dataset types to include into the listing. Currently allowed keys are "filesystem", "volume", "snapshot". Absence of this option implies all types.
+
+The first of the returned file descriptors can be used to read the listing in a binary encounded format. The data is a series of variable sized records each starting with a fixed size header, the header is followed by a serialized nvlist. Each record describes a single element and contains the elements name as well as its properties. The file descriptor must be closed after reading from it. The second file descriptor represents a pipe end to which the kernel driver is writing information. It should not be closed until all interesting information has been read and it must be explicitly closed afterwards.
+`)
+auto listImpl(string name, string[string] options)
+{
+
+
+ import core.sys.posix.unistd;
+ import core.sys.posix.fcntl;
+ import std.format:format;
+
+ int[2] pipefd;
+ enforce(pipe(pipefd) !=-1, "pipe error");
+    fcntl(pipefd[0], F_SETFD, FD_CLOEXEC);
+    fcntl(pipefd[1], F_SETFD, FD_CLOEXEC);
+    options["fd"] = pipefd[1].to!string;
+ auto copts = getProperties(options);
+    auto result = lzc_list(name.toCString,copts);
+    if (result == 3)
+        return PipePair(-1,-1);
+
+    return PipePair(pipefd[0],pipefd[1]);
+}
+
+@SILdoc(`A wrapper for listImpl that hides details of working with the file descriptors and provides data in an easy to consume format.
+Params:
+ string name: the name of the dataset to be listed, could be a snapshot, a volume or a filesystem.
+    int recurse: specifies depth of the recursive listing. If -1 the depth is not limited.
+ string[] types: specifies dataset types to include into the listing. Currently allowed keys are "filesystem", "volume", "snapshot". no types is equivalent to specifying the type of the dataset named by name.
+
+Returns:
+ string[string][] with each dictionary each describing a single listed element.
+`)
+auto list(string name, int recurse = -1, string[] types=[])
+{
+ import std.format:format;
+ import std.algorithm:map;
+ import std.string:join;
+ import core.sys.posix.unistd;
+ string[string][] ret;
+    string[string] options;
+
+
+
+    if (types.length > 0)
+        options["type"] = types.map!(type => type.to!string).join(",");
+    if (recurse > -1)
+  options["recurse"] = recurse.to!string;
+
+
+
+
+ auto pipes = listImpl(name,options);
+ if (pipes.read == -1)
+  return ret;
+
+ scope(exit)
+ {
+  close(pipes.write);
+  close(pipes.read);
+ }
+ while(true)
+ {
+  auto recordBytes = read(pipes.read, _PIPE_RECORD_SIZE);
+  if (recordBytes.length == 0)
+   break;
+  auto record= cast(_PIPE_RECORD_FORMAT)(recordBytes);
+  if (record.err == 3)
+   break;
+
+  if (record.size == 0)
+   break;
+  auto dataBytes = read(pipes.read, record.size);
+  auto entry = processNvlist!(string[string])(dataBytes,record.size);
+  ret ~= entry.dup;
+ }
+ return ret;
+}
+
+@SILdoc(`Get properties of the ZFS dataset.
+Params:
+ string name: the name of the dataset
+
+Errors:
+ DatasetNotFound: if the dataset does not exist.
+ NameInvalid: if the dataset name is invalid.
+ NameTooLong: if the dataset name is too long.
+
+Returns:
+ string[string] mapping the property names to their values.
+
+note:
+The value of clones property is a list of clone names as strings.
+
+warning:
+ The returned dictionary does not contain entries for properties with default values. One exception is the mountpoint property for which the default value is derived from the dataset name.
+`)
+string[string] getProperties(string name)
+{
+ import std.format:format;
+ import std.string: startsWith;
+    auto result = next(list(name, 0,[]));
+    bool isSnapshot = result["dmu_objset_stats"]["dds_is_snapshot"];
+    result = result["properties"];
+
+
+
+
+    auto mountpoint = result.get("mountpoint","");
+ string mountpoint_src;
+ string mountpoint_val;
+ if (mountpoint.length > 0)
+ {
+        mountpoint_src = mountpoint["source"];
+        mountpoint_val = mountpoint["value"];
+
+
+
+
+
+
+        if (mountpoint_val.startsWith("/") && !mountpoint_src.startsWith("$"))
+  {
+            mountpoint_val = mountpoint_val ~ name[mountpoint_src.length..$];
+  }
+ }
+    else if (!isSnapshot)
+ {
+        mountpoint_val = '/' ~ name;
+ }
+    else
+ {
+        mountpoint_val = "";
+ }
+    string[string] ret;
+    if ("clones" in ret)
+        ret["clones"] = ret["clones"].keys;
+    if (mountpoint_val.length > 0)
+        ret["mountpoint"] = mountpoint_val;
+    return ret;
+}
+
+@SILdoc(`List the children of the ZFS dataset.
+Params:
+    string name: the name of the dataset
+
+Returns:
+    string[]: the names of the children.
+
+Errors:
+    NameInvalid: if the dataset name is invalid.
+    NameTooLong: if the dataset name is too long.
+    DatasetNotFound: if the dataset does not exist.
+
+warning:
+ If the dataset does not exist, then the returned iterator would produce no results and no error is reported. That case is indistinguishable from the dataset having no children. An attempt to list children of a snapshot is silently ignored as well.
+`)
+
+string[] listChildren(string name)
+{
+ import std.format:format;
+ string[] ret;
+
+    foreach(entry;list(name,1,["filesystem", "volume"]))
+ {
+        auto child = entry["name"];
+        if (child != name)
+  {
+            ret ~= child;
+  }
+ }
+ return ret;
+}
+
+
+@SILdoc(`List the snapshots of the ZFS dataset.
+Params:
+ string datasetName: the name of the dataset
+
+Returns:
+ string[] the names of the snapshots
+
+Errors:
+    NameInvalid: if the dataset name is invalid.
+    NameTooLong: if the dataset name is too long.
+    DatasetNotFound: if the dataset does not exist.
+
+warning:
+ If the dataset does not exist, then the returned iterator would produce no results and no error is reported. That case is indistinguishable from the dataset having no snapshots. An attempt to list snapshots of a snapshot is silently ignored as well.
+`)
+string[] listSnapshots(string datasetName)
+{
+ import std.format:format;
+ string[] ret;
+    foreach(entry; list(datasetName, 1, ["snapshot"]))
+ {
+        auto snap = entry["name"];
+        if (snap != datasetName)
+  {
+            ret ~= snap;
+  }
+ }
+    return ret;
 }
 
 
@@ -5389,13 +5726,56 @@ string[] processErrorList(nvlist_t* errList)
  nvpair_t* elem = nextNvPair(errList);
  while(elem !is null)
  {
-  auto s = nvpair_name(elem).fromCString;
+  auto s = nvpair_name(elem).fromCString.idup;
   nvpair_value_int32(elem, &errNum);
   ret ~= format!"Failed Snapshot '%s':%s"(s,errNum);
   elem = nvlist_next_nvpair(errList, elem);
  }
  return ret;
 }
+
+ulong[string] processNvlist(T)(nvlist_t* list)
+if (is(T==ulong[string]))
+{
+ ulong[string] ret;
+ nvpair_t* elem;
+ nvpair_value_nvlist(elem,&list);
+ nvpair_t* listElem = nextNvPair(list);
+ ulong[string] dictEntry;
+ while(listElem !is null)
+ {
+  auto listElemKey = nvpair_name(listElem).fromCString.idup;
+  ulong val;
+  nvpair_value_uint64(listElem,&val);
+  ret[listElemKey] = val;
+ }
+ return ret;
+}
+
+
+ulong[string][string] processNvlist(T)(nvlist_t* bookmarks)
+if (is(T==ulong[string][string]))
+{
+ ulong[string][string] ret;
+ if (isNvlistEmpty(bookmarks))
+ {
+  return ret;
+ }
+ scope(exit)
+  nvlistFree(bookmarks);
+ nvpair_t* elem = nextNvPair(bookmarks);
+ while(elem !is null)
+ {
+  auto s = nvpair_name(elem).fromCString.idup;
+  nvlist_t* list;
+  nvpair_value_nvlist(elem,&list);
+  nvpair_t listElem = nextNvPair(list);
+  ret[s] = processNvlist!(ulong[string])(listElem).dup;
+ }
+ return ret;
+}
+
+
 
 
 nvpair_t* nextNvPair(nvlist_t* list, nvpair_t* elemArg = null)

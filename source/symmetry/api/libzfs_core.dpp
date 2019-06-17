@@ -28,7 +28,11 @@ void rename(string from, string to)
 }
 
 // extern(C) void nvlist_free(nvlist_t*);
-
+extern(C) int lzc_destroy_one(const(char) *fsname, nvlist_t *);
+extern(C) int lzc_inherit(const(char)*fsname, const(char)*name, nvlist_t *);
+extern(C) int lzc_set_props(const(char)*, nvlist_t *, nvlist_t *, nvlist_t *);
+extern(C) int lzc_list(const(char)*, nvlist_t*);
+   
 enum DatasetType
 {
 	zfs = LZC_DATSET_TYPE_ZFS,
@@ -982,7 +986,7 @@ ulong[string][string] getBookmarks(string fsName, string[] properties)
 		nvlistFree(props);
 	auto result = lzc_get_bookmarks(fsName.toStringz, props,&bmarks);
 	enforce(result == 0, "ZFS error");
-	return bmarks.processNvList!(ulong[string][string]);
+	return bmarks.processNvlist!(ulong[string][string]);
 }
 
 @SILdoc(`Destroys bookmarks
@@ -1114,7 +1118,7 @@ void executeChannelProgramNoSync(string pool, string program, string[string] par
 	scope(exit)
 		nvlistFree(params);
 	nvlist_t* outnvl;
-	auto result = lzc_channel_program_nosync(pool.toCString, program.toCString, timeout, memLimit, params, &outnvl);
+	auto result = lzc_channel_program_nosync(pool.toCString, program.toCString, instrLimit, memLimit, params, &outnvl);
 	enforce(result == 0, format!"zfs error: %s"(result));
 }
 
@@ -1311,7 +1315,6 @@ Errors:
 note:
     SnapshotDestructionFailure is a compound exception that provides at least one detailed error object in SnapshotDestructionFailure.errors list.  Typical error is SnapshotIsCloned if defer is False.  The snapshot names are validated quite loosely and invalid names are typically ignored as nonexisiting snapshots.  A snapshot name referring to a filesystem that doesnt exist is ignored.  However, non-existent pool name causes PoolNotFound.
 `)
-// DestroySnapshot destroys the snapshots passed in. Wrapper for lzc_destroy_snaps
 void destroySnapshots(string[] snapshotNames, bool deferDelete)
 {
 	import std.format:format;
@@ -1324,7 +1327,7 @@ void destroySnapshots(string[] snapshotNames, bool deferDelete)
 	if  (result != 0)
 	{
 		auto ret2 = processErrorList(errList);
-		enforce(ret2.length ==0, format!" failed libzfs_core snapshot: %s, %s"(snapshotNames,ret2.join(",")));
+		enforce(ret2.length ==0, format!"failed libzfs_core snapshot: %s, %s"(snapshotNames,ret2.join(",")));
 	}
 }
 
@@ -1339,11 +1342,14 @@ Errors:
 `)
 void destroyDataset(string datasetName)
 {
+	import std.string:join;
+	import std.format:format;
+	nvlist_t* errList;
     auto result = lzc_destroy_one(datasetName.toCString,null);
 	if  (result != 0)
 	{
 		auto ret2 = processErrorList(errList);
-		enforce(ret2.length ==0, format!" failed libzfs_core snapshot: %s, %s"(snapshotNames,ret2.join(",")));
+		enforce(ret2.length ==0, format!"failed libzfs_core snapshot: %s, %s"(datasetName,ret2.join(",")));
 	}
 }
 
@@ -1359,10 +1365,13 @@ Errors:
 	DatasetNotFound: if the dataset does not exist.
 	PropertyInvalid: if one or more of the specified properties is invalid or has an invalid type or value.
 
-Inheriting a property actually resets it to its default value or removes it if it's a user property, so that the property could be inherited if it's inheritable.  If the property is not inheritable then it would just have its default value.  This function can be used on snapshots to inherit user defined properties.
+Inheriting a property actually resets it to its default value or removes it if its a user property, so that the property could be inherited if its inheritable.  If the property is not inheritable then it would just have its default value.  This function can be used on snapshots to inherit user defined properties.
 `)
 void inheritProperties(string name, string property)
 {
+	import std.format:format;
+	import std.string:join;
+	nvlist_t* errList;
     auto result = lzc_inherit(name.toCString, property.toCString, null);
 	if  (result != 0)
 	{
@@ -1390,10 +1399,13 @@ note:
 `)
 void setDatasetProperties(string name, string[string] properties)
 {
+	import std.format:format;
+	import std.string:join;
+	nvlist_t* errList;
     auto props = getProperties(properties);
 	scope(exit)
 		nvlistFree(props);
-    auto result = lzc_set_props(name.toCstring, props_nv, null,null);
+    auto result = lzc_set_props(name.toCString, props, null,null);
 	if  (result != 0)
 	{
 		auto ret2 = processErrorList(errList);
@@ -1411,7 +1423,7 @@ struct PipePair
 This function can be used to list child datasets and snapshots of the given dataset.  The listed elements can be filtered by their type and by their depth relative to the starting dataset.  :param bytes name: the name of the dataset to be listed, could be a snapshot or a dataset.
 
 Params:
-	options: a `dict` of the options that control the listing behavior.
+	options: a dict of the options that control the listing behavior.
 
 Returns:
 	PipePair - a pair of file descriptors the first of which can be used to read the listing.
@@ -1421,28 +1433,29 @@ Errors:
 
 Two options are currently available:
 recurse : integer or None
-	specifies depth of the recursive listing. If ``None`` the depth is not limited.  Absence of this option means that only the given dataset is listed.
+	specifies depth of the recursive listing. If None the depth is not limited.  Absence of this option means that only the given dataset is listed.
 type : dict of bytes:None
 	specifies dataset types to include into the listing.  Currently allowed keys are "filesystem", "volume", "snapshot".  Absence of this option implies all types.
 
-The first of the returned file descriptors can be used to read the listing in a binary encounded format.  The data is a series of variable sized records each starting with a fixed size header, the header is followed by a serialized ``nvlist``.  Each record describes a single element and contains the element's name as well as its properties.  The file descriptor must be closed after reading from it.  The second file descriptor represents a pipe end to which the kernel driver is writing information.  It should not be closed until all interesting information has been read and it must be explicitly closed afterwards.
+The first of the returned file descriptors can be used to read the listing in a binary encounded format.  The data is a series of variable sized records each starting with a fixed size header, the header is followed by a serialized nvlist.  Each record describes a single element and contains the elements name as well as its properties.  The file descriptor must be closed after reading from it.  The second file descriptor represents a pipe end to which the kernel driver is writing information.  It should not be closed until all interesting information has been read and it must be explicitly closed afterwards.
 `)
 auto listImpl(string name, string[string] options)
 {
 	// import core.stdc.stdio;
 	// import core.sys.posix.sys.stat;
 	import core.sys.posix.unistd;
-	import core.sys.posix.fcntl,pipe;
+	import core.sys.posix.fcntl;
+	import std.format:format;
 
 	int[2] pipefd;
-	enforce(pipe(pipefd.ptr) !=-1, "pipe error");
+	enforce(pipe(pipefd) !=-1, "pipe error");
     fcntl(pipefd[0], F_SETFD, FD_CLOEXEC);
     fcntl(pipefd[1], F_SETFD, FD_CLOEXEC);
     options["fd"] = pipefd[1].to!string;
 	auto copts = getProperties(options);
     auto result = lzc_list(name.toCString,copts);
-    if (result == ZfsError.ESRCH)
-        return tuple(-1,-1);
+    if (result == ESRCH) 
+        return PipePair(-1,-1);
     //errors.lzc_list_translate_error(ret, name, options)
     return PipePair(pipefd[0],pipefd[1]);
 }
@@ -1451,26 +1464,29 @@ auto listImpl(string name, string[string] options)
 Params:
 	string name: the name of the dataset to be listed, could be a snapshot, a volume or a filesystem.
     int recurse: specifies depth of the recursive listing.  If -1 the depth is not limited.
-	DatasetType[] types: specifies dataset types to include into the listing.  Currently allowed keys are "filesystem", "volume", "snapshot". no types is equivalent to specifying the type of the dataset named by name.
+	string[] types: specifies dataset types to include into the listing.  Currently allowed keys are "filesystem", "volume", "snapshot". no types is equivalent to specifying the type of the dataset named by name.
 
 Returns:
 	string[string][] with each dictionary each describing a single listed element.
 `)
-auto list(string name, int recurse = -1, DatasetType[] types)
+auto list(string name, int recurse = -1, string[] types=[])
 {
+	import std.format:format;
+	import std.algorithm:map;
+	import std.string:join;
 	import core.sys.posix.unistd;
 	string[string][] ret;
     string[string] options;
 
-    //Convert types to a dict suitable for mapping to an nvlist.
-    if types is not None:
-        types = {x: None for x in types}
-        options['type'] = types
-    if recurse is None or recurse > 0:
-        options['recurse'] = recurse
+    // Convert types to a dict suitable for mapping to an nvlist.
+	// FIXME!
+    if (types.length > 0)
+        options["type"] = types.map!(type => type.to!string).join(",");
+    if (recurse > -1)
+		options["recurse"] = recurse.to!string;
 
     // Note that other_fd is used by the kernel side to write the data, so we have to keep that descriptor open until
-    // we are done.  Also, we have to explicitly close the descriptor as the  kernel doesn't do that.
+    // we are done.  Also, we have to explicitly close the descriptor as the  kernel doesnt do that.
 
 	auto pipes = listImpl(name,options);
 	if (pipes.read == -1)
@@ -1483,16 +1499,16 @@ auto list(string name, int recurse = -1, DatasetType[] types)
 	}
 	while(true)
 	{
-		auto recordBytes = read(pipe.read, _PIPE_RECORD_SIZE);
+		auto recordBytes = read(pipes.read, _PIPE_RECORD_SIZE);
 		if (recordBytes.length == 0)
 			break;
 		auto record= cast(_PIPE_RECORD_FORMAT)(recordBytes);
-		if (record.err == errno.ESRCH)
+		if (record.err == ESRCH)
 			break;
-		errors.lzc_list_translate_error(record.err, name, options)
+		// errors.lzc_list_translate_error(record.err, name, options)
 		if (record.size == 0)
 			break;
-		auto dataBytes = read(pipe.read, record.size);
+		auto dataBytes = read(pipes.read, record.size);
 		auto entry = processNvlist!(string[string])(dataBytes,record.size);
 		ret ~= entry.dup;
 	}
@@ -1519,6 +1535,8 @@ warning:
 `)
 string[string] getProperties(string name)
 {
+	import std.format:format;
+	import std.string: startsWith;
     auto result = next(list(name, 0,[]));
     bool isSnapshot = result["dmu_objset_stats"]["dds_is_snapshot"];
     result = result["properties"];
@@ -1527,10 +1545,12 @@ string[string] getProperties(string name)
 	// sufficient.  One exception is the 'mountpoint' property the final value of which
 	// is not the same as the inherited value.
     auto mountpoint = result.get("mountpoint","");
+	string mountpoint_src;
+	string mountpoint_val;
 	if (mountpoint.length > 0)
 	{
-        auto mountpoint_src = mountpoint["source"];
-        auto mountpoint_val = mountpoint["value"];
+        mountpoint_src = mountpoint["source"];
+        mountpoint_val = mountpoint["value"];
 
         // 'source' is the name of the dataset that has 'mountpoint' set to a non-default value
 		// and from which the current dataset inherits the property.  'source' can be the current
@@ -1550,12 +1570,12 @@ string[string] getProperties(string name)
 	{
         mountpoint_val = "";
 	}
-    result = {k: v['value'] for k, v in result.iteritems()}
-    if ("clones" in result)
-        result["clones"] = result["clones"].keys;
+    string[string] ret; // FIXME result = {k: v['value'] for k, v in result.iteritems()}
+    if ("clones" in ret)
+        ret["clones"] = ret["clones"].keys;
     if (mountpoint_val.length > 0)
-        result["mountpoint"] = mountpoint_val;
-    return result;
+        ret["mountpoint"] = mountpoint_val;
+    return ret;
 }
 
 @SILdoc(`List the children of the ZFS dataset.
@@ -1576,10 +1596,12 @@ warning:
 
 string[] listChildren(string name)
 {
+	import std.format:format;
 	string[] ret;
-    foreach(entry;list(name,1,[DatasetType.filesystem, DatasetType.volume]))
+    //foreach(entry;list(name,1,[DatasetType.filesystem, DatasetType.volume]))
+    foreach(entry;list(name,1,["filesystem", "volume"]))
 	{
-        child = entry["name"];
+        auto child = entry["name"];
         if (child != name)
 		{
             ret ~= child;
@@ -1590,7 +1612,7 @@ string[] listChildren(string name)
 
 
 @SILdoc(`List the snapshots of the ZFS dataset.
-Prams:
+Params:
 	string datasetName: the name of the dataset
 
 Returns:
@@ -1606,11 +1628,12 @@ warning:
 `)
 string[] listSnapshots(string datasetName)
 {
+	import std.format:format;
 	string[] ret;
-    foreach(entry; list(datasetName, 1, [DatasetType.snapshot]))
+    foreach(entry; list(datasetName, 1, ["snapshot"]))
 	{
         auto snap = entry["name"];
-        if (snap != name)
+        if (snap != datasetName)
 		{
             ret ~= snap;
 		}
@@ -1667,7 +1690,7 @@ string[] processErrorList(nvlist_t* errList)
 	nvpair_t* elem = nextNvPair(errList);
 	while(elem !is null)
 	{
-		auto s = nvpair_name(elem).fromCString;
+		auto s = nvpair_name(elem).fromCString.idup;
 		nvpair_value_int32(elem, &errNum);
 		ret ~= format!"Failed Snapshot '%s':%s"(s,errNum);
 		elem = nvlist_next_nvpair(errList, elem);
@@ -1679,12 +1702,13 @@ ulong[string] processNvlist(T)(nvlist_t* list)
 if (is(T==ulong[string]))
 {
 	ulong[string] ret;
+	nvpair_t* elem;
 	nvpair_value_nvlist(elem,&list);
-	nvpair_t listElem = nextNvPair(list);
+	nvpair_t* listElem = nextNvPair(list);
 	ulong[string] dictEntry;
 	while(listElem !is null)
 	{
-		auto listElemKey = nvpair_name(listElem).fromCString;
+		auto listElemKey = nvpair_name(listElem).fromCString.idup;
 		ulong val;
 		nvpair_value_uint64(listElem,&val);
 		ret[listElemKey] = val;
@@ -1697,7 +1721,7 @@ ulong[string][string] processNvlist(T)(nvlist_t* bookmarks)
 if (is(T==ulong[string][string]))
 {
 	ulong[string][string] ret;
-	if (isNvListEmpty(bookmarks))
+	if (isNvlistEmpty(bookmarks))
 	{
 		return ret;
 	}
@@ -1706,7 +1730,7 @@ if (is(T==ulong[string][string]))
 	nvpair_t* elem = nextNvPair(bookmarks);
 	while(elem !is null)
 	{
-		auto s = nvpair_name(elem).fromCString;
+		auto s = nvpair_name(elem).fromCString.idup;
 		nvlist_t* list;
 		nvpair_value_nvlist(elem,&list);
 		nvpair_t listElem = nextNvPair(list);
