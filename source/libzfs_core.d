@@ -2578,7 +2578,7 @@ extern(C)
     int fseek(_IO_FILE*, c_long, int) @nogc nothrow;
     c_ulong fwrite_unlocked(const(void)*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
     c_ulong fread_unlocked(void*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
-    c_ulong fwrite(const(void)*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
+    //c_ulong fwrite(const(void)*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
     c_ulong fread(void*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
     int ungetc(int, _IO_FILE*) @nogc nothrow;
     int puts(const(char)*) @nogc nothrow;
@@ -2659,7 +2659,7 @@ extern(C)
     int getw(_IO_FILE*) @nogc nothrow;
     int putchar_unlocked(int) @nogc nothrow;
     int putc_unlocked(int, _IO_FILE*) @nogc nothrow;
-    int fputc_unlocked(int, _IO_FILE*) @nogc nothrow;
+    //int fputc_unlocked(int, _IO_FILE*) @nogc nothrow;
     int putchar(int) @nogc nothrow;
     int putc(int, _IO_FILE*) @nogc nothrow;
     int fputc(int, _IO_FILE*) @nogc nothrow;
