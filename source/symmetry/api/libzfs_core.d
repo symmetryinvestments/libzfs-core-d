@@ -5479,7 +5479,7 @@ auto listImpl(string name, string[string] options)
 {
 
 
- import core.sys.posix.unistd;
+ import core.sys.posix.unistd: pipe;
  import core.sys.posix.fcntl;
  import std.format:format;
 
@@ -5496,6 +5496,14 @@ auto listImpl(string name, string[string] options)
     return PipePair(pipefd[0],pipefd[1]);
 }
 
+struct PipeRecord
+{
+ uint size;
+ ubyte val1;
+ ubyte err;
+ ubyte val2;
+ ubyte val3;
+}
 @SILdoc(`A wrapper for listImpl that hides details of working with the file descriptors and provides data in an easy to consume format.
 Params:
  string name: the name of the dataset to be listed, could be a snapshot, a volume or a filesystem.
@@ -5510,7 +5518,7 @@ auto list(string name, int recurse = -1, string[] types=[])
  import std.format:format;
  import std.algorithm:map;
  import std.string:join;
- import core.sys.posix.unistd;
+ import core.sys.posix.unistd: pipe, read, close;
  string[string][] ret;
     string[string] options;
 
@@ -5535,17 +5543,21 @@ auto list(string name, int recurse = -1, string[] types=[])
  }
  while(true)
  {
-  auto recordBytes = read(pipes.read, _PIPE_RECORD_SIZE);
-  if (recordBytes.length == 0)
+  ubyte[PipeRecord.sizeof] recordBytes;
+  auto numBytes= read(pipes.read, cast(void*) recordBytes.ptr,PipeRecord.sizeof);
+  if (numBytes != recordBytes.length)
    break;
-  auto record= cast(_PIPE_RECORD_FORMAT)(recordBytes);
+  auto record= cast(PipeRecord)(recordBytes);
   if (record.err == 3)
    break;
 
   if (record.size == 0)
    break;
-  auto dataBytes = read(pipes.read, record.size);
-  auto entry = processNvlist!(string[string])(dataBytes,record.size);
+  ubyte[] dataBytes;
+  dataBytes.length = record.size;
+  numBytes= read(pipes.read, cast(void*) dataBytes.ptr,record.size);
+  enforce(numBytes == dataBytes.length);
+  auto entry = processNvlist!(string[string])(cast(nvlist_t*)dataBytes.ptr);
   ret ~= entry.dup;
  }
  return ret;
@@ -5573,14 +5585,20 @@ string[string] getProperties(string name)
 {
  import std.format:format;
  import std.string: startsWith;
-    auto result = next(list(name, 0,[]));
-    bool isSnapshot = result["dmu_objset_stats"]["dds_is_snapshot"];
-    result = result["properties"];
+ import std.range:front;
+    auto result = list(name, 0,[]).front;
+    bool isSnapshot = false;
+
+
 
 
 
 
     auto mountpoint = result.get("mountpoint","");
+
+
+version(None)
+{
  string mountpoint_src;
  string mountpoint_val;
  if (mountpoint.length > 0)
@@ -5606,11 +5624,14 @@ string[string] getProperties(string name)
  {
         mountpoint_val = "";
  }
+}
     string[string] ret;
+/+
     if ("clones" in ret)
         ret["clones"] = ret["clones"].keys;
     if (mountpoint_val.length > 0)
         ret["mountpoint"] = mountpoint_val;
++/
     return ret;
 }
 
@@ -5769,14 +5790,30 @@ if (is(T==ulong[string][string]))
   auto s = nvpair_name(elem).fromCString.idup;
   nvlist_t* list;
   nvpair_value_nvlist(elem,&list);
-  nvpair_t listElem = nextNvPair(list);
-  ret[s] = processNvlist!(ulong[string])(listElem).dup;
+  ret[s] = processNvlist!(ulong[string])(list).dup;
+  elem = nextNvPair(bookmarks);
  }
  return ret;
 }
 
+string[string] processNvlist(T)(nvlist_t* list)
+if (is(T == string[string]))
+{
+ string[string] ret;
+ auto pair = nextNvPair(list,null);
+ while( pair !is null)
+ {
+  auto name = nvpair_name(pair).fromCString.idup;
+  char* val;
+  auto result = nvpair_value_string(pair, &val);
+  enforce(result ==0);
+  ret[name] = val.fromCString.idup;
+  pair = nvlist_next_nvpair(list,pair);
+ }
+ return ret;
+}
 
-
+alias asDict = processNvlist!(string[string]);
 
 nvpair_t* nextNvPair(nvlist_t* list, nvpair_t* elemArg = null)
 {
@@ -5821,21 +5858,6 @@ bool isNvlistEmpty(nvlist_t* cnvlist)
  return (nvlist_empty(cnvlist) !=0);
 }
 
-string[string] asDict(nvlist_t* list)
-{
- string[string] ret;
- auto pair = nextNvPair(list,null);
- while( pair !is null)
- {
-  auto name = nvpair_name(pair).fromCString.idup;
-  char* val;
-  auto result = nvpair_value_string(pair, &val);
-  enforce(result ==0);
-  ret[name] = val.fromCString.idup;
-  pair = nvlist_next_nvpair(list,pair);
- }
- return ret;
-}
 
 
 
