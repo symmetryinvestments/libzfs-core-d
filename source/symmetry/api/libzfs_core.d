@@ -1,4 +1,4 @@
-module libzfs_core;
+module symmetry.api.libzfs_core;
 
 
         import core.stdc.config;
@@ -2582,7 +2582,7 @@ extern(C)
     c_ulong fread(void*, c_ulong, c_ulong, _IO_FILE*) @nogc nothrow;
     int ungetc(int, _IO_FILE*) @nogc nothrow;
     int puts(const(char)*) @nogc nothrow;
-    int fputs(const(char)*, _IO_FILE*) @nogc nothrow;
+    //int fputs(const(char)*, _IO_FILE*) @nogc nothrow;
     c_long getline(char**, c_ulong*, _IO_FILE*) @nogc nothrow;
     c_long getdelim(char**, c_ulong*, int, _IO_FILE*) @nogc nothrow;
     struct re_pattern_buffer
@@ -2662,7 +2662,7 @@ extern(C)
     //int fputc_unlocked(int, _IO_FILE*) @nogc nothrow;
     int putchar(int) @nogc nothrow;
     int putc(int, _IO_FILE*) @nogc nothrow;
-    int fputc(int, _IO_FILE*) @nogc nothrow;
+    //int fputc(int, _IO_FILE*) @nogc nothrow;
     alias fpos_t = _G_fpos_t;
     int fgetc_unlocked(_IO_FILE*) @nogc nothrow;
     int getchar_unlocked() @nogc nothrow;
@@ -4076,6 +4076,7 @@ import std.string:toStringz, fromStringz;
 import std.exception;
 import taggedalgebraic;
 import std.conv:to;
+import std.typecons:tuple;
 
 alias toCString = toStringz;
 alias fromCString = fromStringz;
@@ -4320,7 +4321,7 @@ enum DatasetProperty
 enum ZfsError
 {
  success = 0,
- nomem ,
+ nomem = 2000 ,
  badprop,
  propreadonly,
  proptype,
@@ -4561,39 +4562,117 @@ nvlist_t* asList(ZfsValue[string] values)
    case ZfsValue.
 +/
 
-void create(string filesystem, DatasetType dataSetType, ubyte[] wkeyData)
+@SILdoc(`Create a ZFS filesystem or a ZFS volume (zvol)
+Params:
+ string name - name of the dataset to be created
+ DataSetType datasetType - dataset type (either zfs for a filesystem or zvol for a volume
+ string[string] properties - a dictionary od ZFS dataset property name-value pairs
+ ubyte[] encryptionKey - dataset encryption key data
+
+Errors:
+ FilesystemExists - if a dataset with the given name already exists
+ ParentNotFound - if a parent dataset of the requested dataset does not exist
+ PropertyInvalid - if one or more of specified properties does not exist or has an invalid type or value
+ NameInvalid - if the name is not a valid dataset name
+ NameTooLong - if the name is too long
+ WrongParent - if the parent dataset of the requested dataset is not a filesyssource/symmetry/api/libzfs_core.d.tmp:6345:67: warning: missing terminating ' character
+     NameTooLong: if the dataset name is too longor  if the dataset's origin has a snapshot that, if transferred to the dataset, would get a too long name.
+                                                                   ^
+source/symmetry/api/libzfs_core.d.tmp:6348:98: warning: missing terminating ' character
+     SnapshotExists: if the dataset already has a snapshot with the same name as one of the origin's snapshots.
+                                                                                                  ^
+tem eg zvol
+`)
+void create(string name, DatasetType dataSetType, string[string] properties = (string[string]).init, ubyte[] encryptionKey =[])
 {
- auto props = nvlistAlloc(0x1, 0);
+ import std.format:format;
+ auto props = getProperties(properties);
  scope(exit)
   nvlistFree(props);
- auto result = lzc_create(filesystem.toCString, cast(lzc_dataset_type) dataSetType, props,wkeyData.ptr,wkeyData.length.to!uint_t);
+ auto result = lzc_create(name.toCString, cast(lzc_dataset_type) dataSetType, props,encryptionKey.ptr,encryptionKey.length.to!uint_t);
+ enforce(result==0, format!"zfs create: %s"(result));
+}
+
+@SILdoc(`Clone a ZFS filesystem or a ZFS volume ("zvol") from a given snapshot.
+Params:
+ string name: a name of the dataset to be created.
+ string origin: a name of the origin snapshot.
+ string[string] properties: ZFS dataset property name-value pairs
+
+Errors:
+ FilesystemExists: if a dataset with the given name already exists.
+ DatasetNotFound: if either a parent dataset of the requested dataset or the origin snapshot does not exist.
+ PropertyInvalid: if one or more of the specified properties is invalid or has an invalid type or value.
+ FilesystemNameInvalid: if the name is not a valid dataset name.
+ SnapshotNameInvalid: if the origin is not a valid snapshot name.
+ NameTooLong: if the name or the origin name is too long.
+ PoolsDiffer: if the clone and the origin have different pool names.
+Note:
+ Because of a deficiency of the underlying C interface DatasetNotFound can mean that either a parent filesystem of the target or the origin snapshot does not exist. It is currently impossible to distinguish between the cases.
+ lzc_hold can be used to check that the snapshot exists and ensure that it is not destroyed before cloning.
+`)
+void clone(string name, string origin, string[string] properties = (string[string]).init)
+{
+ auto props = getProperties(properties);
+ scope(exit)
+  nvlistFree(props);
+ auto result = lzc_clone(name.toCString,origin.toCString,props);
  enforce(result==0,"something went wrong");
 }
 
-void clone(string filesystem, string origin)
-{
- auto props = nvlistAlloc(0x1, 0);
- scope(exit)
-  nvlistFree(props);
- auto result = lzc_clone(filesystem.toCString,origin.toCString,props);
- enforce(result==0,"something went wrong");
-}
+@SILdoc(`Promotes the ZFS dataset.
+Params:
+ string name: the name of the dataset to promote.
 
-string promote(string filesystem)
+Errors:
+ NameInvalid: if the dataset name is invalid.
+    NameTooLong: if the dataset name is too longor if the dataset's origin has a snapshot that, if transferred to the dataset, would get a too long name.
+    NotClone: if the dataset is not a clone.
+    FilesystemNotFound: if the dataset does not exist.
+    SnapshotExists: if the dataset already has a snapshot with the same name as one of the origin's snapshots.
+`)
+string promote(string name)
 {
  char[16384] buf;
- auto result = lzc_promote(filesystem.toCString,buf.ptr, buf.length);
+ auto result = lzc_promote(name.toCString,buf.ptr, buf.length);
  enforce(result==0,"something went wrong");
  return buf.ptr.fromCString.idup;
 }
 
+@SILdoc(`Remaps the ZFS dataset.
+Params:
+ string name: the name of the dataset to remap.
+
+Errors:
+ NameInvalid: if the dataset name is invalid.
+    NameTooLong: if the dataset name is too long.
+    DatasetNotFound: if the dataset does not exist.
+    FeatureNotSupported: if the pool containing the dataset does not have the *obsolete_counts* feature enabled.
+`)
 void remap(string filesystem)
 {
  auto result = lzc_remap(filesystem.toCString);
  enforce(result==0,"something went wrong");
 }
 
+@SILdoc(`Calculate a size of data referenced by snapshots in the inclusive range between the firstsnap and the lastsnap and not shared with any other datasets.
 
+Params:
+    string firstSnap: the name of the first snapshot in the range.
+    string lastSnap: the name of the last snapshot in the range.
+
+Returns:
+ ulong: the calculated stream size, in bytes.
+
+Errors:
+    SnapshotNotFound: if either of the snapshots does not exist.
+    NameInvalid: if the name of either snapshot is invalid.
+    NameTooLong: if the name of either snapshot is too long.
+    SnapshotMismatch: if fromsnap is not an ancestor snapshot of snapname
+    PoolsDiffer: if the snapshots belong to different pools.
+
+snapRangeSpace calculates total size of blocks that exist because they are referenced only by one or more snapshots in the given range but no other dataset. In other words, this is the set of blocks that were born after the snap before firstsnap, and died before the snap after the last snap. Yet another interpretation is that the result of snapRangeSpace is the size of the space that would be freed if the snapshots in the range are destroyed. If the same snapshot is given as both the firstSnap and the lastSnap then snapRangeSpace calculates space used by the snapshot.
+`)
 ulong snapRangeSpace(string firstSnap, string lastSnap)
 {
  ulong ret;
@@ -4619,25 +4698,57 @@ auto poolSync(string poolName, bool force)
  enforce(result ==0, format!"error during pool sync: %s"(result));
 }
 
-auto holdSnapshot(nvlist_t* holds, int cleanUpFD)
+@SILdoc(`Create user holds on snapshots. If there is a hold on a snapshot, the snapshot can not be destroyed. (However, it can be marked for deletion by destroySnaps{defer:true} ).
+Parameters:
+    string[string] holds: the dictionary of names of the snapshots to hold mapped to the hold names.
+    int fileDescriptor: result of opening file
+
+Returns:
+    string[] : list of snapshots that do not exist
+
+Errors:
+    HoldFailure: if a hold was impossible on one or more of the snapshots.
+    BadHoldCleanupFD: if fd is not a valid file descriptor associated with /dev/zfs
+
+The snapshots must all be in the same pool.
+
+If cleanupFd is set, then when the Fd is closed (including on process termination), the holds will be released. If the system is shut down uncleanly, the holds will be released when the pool is next opened or imported. Holds for snapshots which dont exist will be skipped and have an entry added to the return value, but will not cause an overall failure. No exceptions is raised if all holds, for snapshots that existed, were succesfully created.
+`)
+void holdSnapshot(string[string] holdsMap, int cleanupFd = -1)
 {
  import std.format:format;
  nvlist_t* errlist;
- auto result = lzc_hold(holds, cleanUpFD, &errlist);
- enforce(result ==0, format!"error during holdsnaps: %s"(result));
- return errlist;
+ auto holds = getProperties(holdsMap);
+ auto result = lzc_hold(holds, cleanupFd, &errlist);
+ enforce(result ==0, format!"error during holdsnaps: %s / %s"(result,processErrorList(errlist)));
 }
 
-/+
-auto unholdSnapshot(nvlist_t* holds, int cleanupFD)
+@SILdoc(`Release user holds on snapshots.
+If the snapshot has been marked for deferred destroy (by destroySnapshots({defer:true}), it does not have any clones, and all the user holds are removed, then the snapshot will be destroyed. The snapshots must all be in the same pool.
+Params:
+    string[string] holdsMap: a map where keys are snapshot names and values are lists of hold tags to remove.
+Returns:
+ an array of any snapshots that do not exist and of any tags that do not exist for existing snapshots. Such tags are qualified with a corresponding snapshot name using the following format :file:{pool}/{fs}@{snap}#{tag}
+Errors:
+ HoldReleaseFailure: if one or more existing holds could not be released.
+Holds which failed to release because they didnt exist will have an entry added to errlist, but will not cause an overall failure. This call is success if holds was empty or all holds that existed, were successfully removed. Otherwise an exception will be raised.
+`)
+void releaseSnapshot(string[string] holdsMap)
 {
  import std.format:format;
  nvlist_t* errlist;
- auto result = lzc_unhold(holds, cleanUpFD, &errlist);
- enforce(result ==0, format!"error during unholdsnaps: %s"(result));
- return errlist;
+ auto holds = getProperties(holdsMap);
+ auto result = lzc_release(holds, &errlist);
+ enforce(result ==0, format!"error during unholdsnaps: %s / %s"(result,processErrorList(errlist)));
 }
-+/
+
+@SILdoc(`Retrieve list of *user holds* on the specified snapshot.
+Params:
+ string snapName: the name of the snapshot
+
+Returns:
+ ulong[string] holds on the snapshots along with their creation times in seconds since the epoch
+`)
 auto getHeldSnapshots(string snapName)
 {
  import std.format:format;
@@ -4655,6 +4766,31 @@ enum SendFlag
  raw = LZC_SEND_FLAG_RAW
 }
 
+@SILdoc(`Generate a zfs send stream for the specified snapshot and write it to the specified file descriptor.
+Params:
+    string snapname: the name of the snapshot to send.
+    string fromsnap: if not empty the name of the starting snapshot for the incremental stream.
+    int fileDescriptor: the file descriptor to write the send stream to.
+    SendFlag[] flags: the flags that control what enhanced features can be used in the stream.
+Errors:
+ SnapshotNotFound: if either the starting snapshot is set and does not exist, or if the ending snapshot does not exist.
+    NameInvalid: if the name of either snapshot is invalid.
+    NameTooLong: if the name of either snapshot is too long.
+    SnapshotMismatch: if fromsnap is not an ancestor snapshot of snapname
+    PoolsDiffer: if the snapshots belong to different pools.
+    IOError: if an input / output error occurs while writing to fd
+    UnknownStreamFeature: if the flags contain an unknown flag name.
+
+If fromsnap is empty, a full (non-incremental) stream will be sent.
+If fromsnap is not empty, it must be the full name of a snapshot or bookmark to send an incremental from, e.g. :file:{pool}/{fs}@{earlier_snap} or :file:{pool}/{fs}#{earlier_bmark}. The specified snapshot or bookmark must represent an earlier point in the history of snapname. It can be an earlier snapshot in the same filesystem or zvol as snapname, or it can be the origin of snapnames filesystem, or an earlier snapshot in the origin, etc. fromsnap must be strictly an earlier snapshot, specifying the same snapshot as both fromsnap and snapname is an error.
+
+If flags contains *"large_blocks"*, the stream is permitted to contain DRR_WRITE records with drr_length > 128K, and DRR_OBJECT records with drr_blksz > 128K. If flags contains *"embedded_data"*, the stream is permitted to contain DRR_WRITE_EMBEDDED records with drr_etype == BP_EMBEDDED_TYPE_DATA, which the receiving system must support (as indicated by support for the *embedded_data* feature). If flags contains *"compress"*, the stream is generated by using compressed WRITE records for blocks which are compressed on disk and in memory. If the *lz4_compress* feature is active on the sending system, then the receiving system must have that feature enabled as well. If flags contains *"raw"*, the stream is generated, for encrypted datasets, by sending data exactly as it exists on disk. This allows backups to be taken even if encryption keys are not currently loaded.
+
+note:
+ lzc_send can actually accept a filesystem name as the snapname. In that case lzc_send acts as if a temporary snapshot was created after the start of the call and before the stream starts being produced.
+ lzc_send does not return until all of the stream is written to fd.
+ lzc_send does *not* close fd upon returning.
+`)
 void sendSnapshot(string snapshotName, string fromSnapshot, int fileDescriptor, SendFlag[] flags)
 {
  import std.algorithm:fold;
@@ -4663,6 +4799,27 @@ void sendSnapshot(string snapshotName, string fromSnapshot, int fileDescriptor, 
  enforce(result == 0, "zfs error");
 }
 
+@SILdoc(`Resume a previously interrupted send operation generating a zfs send stream for the specified snapshot and writing it to the specified file descriptor.
+Params:
+    string snapname: the name of the snapshot to send.
+    string fromsnap: if set the name of the starting snapshot for the incremental stream.
+    int fd: the file descriptor to write the send stream to.
+    SendFlag[] flags: the flags that control what enhanced features can be used in the stream.
+    ulong resumeobj: the object number where this send stream should resume from.
+    ulong resumeoff: the offset where this send stream should resume from.
+
+Errors:
+    SnapshotNotFound: if either the starting snapshot is set and does not exist, or if the ending snapshot does not exist.
+    NameInvalid: if the name of either snapshot is invalid.
+    NameTooLong: if the name of either snapshot is too long.
+    SnapshotMismatch: if fromsnap is not an ancestor snapshot of snapname
+    PoolsDiffer: if the snapshots belong to different pools.
+    IOError: if an input / output error occurs while writing to fd
+    UnknownStreamFeature: if the flags contain an unknown flag name.
+
+note:
+ See sendSnapshot for more information
+`)
 auto sendResume(string snapshotName, string fromSnapshot, int fileDescriptor, SendFlag[] flags, ulong resumeObj, ulong resumeOff)
 {
  import std.algorithm:fold;
@@ -4706,17 +4863,12 @@ auto sendSpace(string snapshotName, string from, SendFlag[] flags)
  *
  * Non-Linux OpenZFS platforms have opted to modify the legacy interface.
  */
-int recv_impl(const char *snapname, nvlist_t *recvdprops, nvlist_t *localprops, uint8_t *wkeydata, uint_t wkeylen, const char *origin, boolean_t force, boolean_t resumable, boolean_t raw, int input_fd, const dmu_replay_record_t *begin_record, int cleanup_fd, uint64_t *read_bytes, uint64_t *errflags, uint64_t *action_handle, nvlist_t **errors)
+int recv_impl(const char *snapname, nvlist_t *recvdprops, nvlist_t *localprops, uint8_t *wkeydata, uint_t wkeylen, const char *origin, boolean_t force, boolean_t resumable, boolean_t raw, int input_fd, const dmu_replay_record *begin_record, int cleanup_fd, uint64_t *read_bytes, uint64_t *errflags, uint64_t *action_handle, nvlist_t **errors)
 
 +/
 
 @SILdoc(`zfs receive:
-The simplest receive case: receive from the specified fd, creating the
-specified snapshot. Apply the specified properties as "received" properties
-(which can be overridden by locally-set properties). If the stream is a
-clone, its origin snapshot must be specified by 'origin'. The 'force'
-flag will cause the target filesystem to be rolled back or destroyed if
-necessary to receive.
+The simplest receive case: receive from the specified fd, creating the specified snapshot. Apply the specified properties as "received" properties (which can be overridden by locally-set properties). If the stream is a clone, its origin snapshot must be specified by origin. The 'force' flag will cause the target filesystem to be rolled back or destroyed if necessary to receive.
 
 Return 0 on success or an (*__errno_location ()) on failure.
 
@@ -4724,11 +4876,10 @@ Note: this interface does not work on dedupd streams (those with DMU_BACKUP_FEAT
 
 resumable: Like lzc_receive, but if the receive fails due to premature stream termination, the intermediate state will be preserved on disk. In this case, ECKSUM will be returned. The receive may subsequently be resumed with a resuming send stream generated by lzc_send_resume().
 `)
-auto zfsReceive(string snapName, string origin, bool force, bool raw, int fileDescriptor, bool resumable = false)
+void zfsReceive(string snapName, string origin, bool force, bool raw, int fileDescriptor, string[string] properties = (string[string]).init, bool resumable = false)
 {
  import std.format:format;
-
- auto props = nvlistAlloc(0x1, 0);
+ auto props = getProperties(properties);
  scope(exit)
   nvlistFree(props);
  auto result = resumable ? lzc_receive(snapName.toCString, props,origin.toCString, force? 1:0, raw?1:0, fileDescriptor) :
@@ -4736,33 +4887,44 @@ auto zfsReceive(string snapName, string origin, bool force, bool raw, int fileDe
  enforce(result == 0, format!"zfs error: %s"(result));
 }
 
-/+
-int
-lzc_receive_with_header(const char *snapname, nvlist_t *props,
-    const char *origin, boolean_t force, boolean_t resumable, boolean_t raw,
-    int fd, const dmu_replay_record_t *begin_record)
+@SILdoc(`zfsReceiveWithHeader
+Like lzc_receive, but allows the caller to read the begin record and then to pass it in. That could be useful if the caller wants to derive, for example, the snapname or the origin parameters based on the information contained in the begin record.
+The begin record must be in its original form as read from the stream, in other words, it should not be byteswapped.
 
-*
- * Like lzc_receive, but allows the caller to pass all supported arguments
- * and retrieve all values returned. The only additional input parameter
- * is 'cleanup_fd' which is used to set a cleanup-on-exit file descriptor.
- *
- * The following parameters all provide return values. Several may be set
- * in the failure case and will contain additional information.
- *
- * The 'read_bytes' value will be set to the total number of bytes read.
- *
- * The 'errflags' value will contain zprop_errflags_t flags which are
- * used to describe any failures.
- *
- * The 'action_handle' is used to pass the handle for this guid/ds mapping.
- * It should be set to zero on first call and will contain an updated handle
- * on success, it should be passed in subsequent calls.
- *
- * The 'errors' nvlist contains an entry for each unapplied received
- * property. Callers are responsible for freeing this nvlist.
- */
-int lzc_receive_one(const char *snapname, nvlist_t *props, const char *origin, boolean_t force, boolean_t resumable, boolean_t raw, int input_fd, const dmu_replay_record_t *begin_record, int cleanup_fd, uint64_t *read_bytes, uint64_t *errflags, uint64_t *action_handle, nvlist_t **errors)
+The 'resumable' parameter allows to obtain the same behavior as with lzc_receive_resumable.
+`)
+void zfsReceiveWithHeader(string snapName, string[string] properties, string origin, bool force, bool resumable, bool raw, int fileDescriptor, dmu_replay_record* beginRecord)
+{
+ auto props = getProperties(properties);
+ scope(exit)
+  nvlistFree(props);
+ auto result = lzc_receive_with_header(snapName.toCString, props, origin.toCString, force ? 1 :0, resumable ? 1 : 0, raw ? 1 :0, fileDescriptor, beginRecord);
+ enforce(result == 0);
+}
+
+@SILdoc(`zfsReceiveOne
+Like lzc_receive, but allows the caller to pass all supported arguments and retrieve all values returned. The only additional input parameter is 'cleanup_fd' which is used to set a cleanup-on-exit file descriptor.
+
+The following parameters all provide return values. Several may be set in the failure case and will contain additional information.
+
+The 'read_bytes' value will be set to the total number of bytes read.
+The 'errflags' value will contain zprop_errflags_t flags which are used to describe any failures.
+The 'action_handle' is used to pass the handle for this guid/ds mapping. It should be set to zero on first call and will contain an updated handle on success, it should be passed in subsequent calls.
+The 'errors' nvlist contains an entry for each unapplied received property. Callers are responsible for freeing this nvlist.
+`)
+auto zfsReceiveOne(string snapName, string[string] properties, string origin, bool force, bool resumable, bool raw, int fileDescriptor, dmu_replay_record* beginRecord, int cleanupFileDescriptor, ulong actionHandle = 0UL)
+{
+ ulong readBytes;
+ ulong errorFlags;
+ nvlist_t* errorList;
+ auto props = getProperties(properties);
+ scope(exit)
+  nvlistFree(props);
+ auto result = lzc_receive_one(snapName.toCString, props, origin.toCString, force ? 1 : 0, resumable ? 1 :0, raw ? 1 : 0, fileDescriptor, beginRecord, cleanupFileDescriptor, &readBytes, &errorFlags, &actionHandle,&errorList);
+ enforce(result == 0);
+ return tuple(readBytes,actionHandle,errorFlags,errorList.processErrorList);
+}
+
 
 @SILdoc(`Like lzc_receive_one, but allows the caller to pass an additional 'cmdprops' argument.
 
@@ -4770,18 +4932,23 @@ The 'cmdprops' nvlist contains both override ('zfs receive -o') and
 exclude ('zfs receive -x') properties. Callers are responsible for freeing
 this nvlist
 `)
-auto zfsReceiveWithCommandProperties(string snapName, Property[] properties, Property[] commandProperties, ubyte[] keyData, string origin, bool force, bool resumable, bool raw, int inputFileDescriptor, DmuReplyRecord* beginRecord, int cleanupFileDescriptor)
+auto zfsReceiveWithCommandProperties(string snapName, string[string] properties, string[string] commandProperties, ubyte[] keyData, string origin, bool force, bool resumable, bool raw, int inputFileDescriptor, dmu_replay_record* beginRecord, int cleanupFileDescriptor,ulong actionHandle = 0UL)
 {
+ import std.format:format;
  ulong readBytes;
- ulong errFlags;
- ulong actionHandle;
+ ulong errorFlags;
  nvlist_t* errors;
-
- auto result = lzc_receive_with_cmdprops(snapName.toCString, properties.asPtr, commandProperties.asPtr, keyData.ptr, keyData.length.to!uint, origin.toCString, force ? 1 :0, resumable ? 1 :0, raw ? 1 : 0, inputFileDescriptor, beginRecord, cleanupFileDescriptor, &readBytes, &errFlags, &actionHandle, &errors);
+ auto props = getProperties(properties);
+ scope(exit)
+  nvlistFree(props);
+ auto cmdProps = getProperties(commandProperties);
+ scope(exit)
+  nvlistFree(cmdProps);
+ auto result = lzc_receive_with_cmdprops(snapName.toCString, props, cmdProps, keyData.ptr, keyData.length.to!uint, origin.toCString, force ? 1 :0, resumable ? 1 :0, raw ? 1 : 0, inputFileDescriptor, beginRecord, cleanupFileDescriptor, &readBytes, &errorFlags, &actionHandle, &errors);
  enforce(result == 0, format!"zfs error %s"(result));
+ return tuple(readBytes,actionHandle,errorFlags,errors.processErrorList);
 }
 
-+/
 
 @SILdoc(`Roll back this filesystem or volume to its most recent snapshot
 If snapnamebuf is not (cast(void*)0), it will be filled in with the name of the most recent snapshot. Note that the latest snapshot may change if a new one is concurrently created or the current one is destroyed. lzc_rollback_to can be used to roll back to a specific latest snapshot.`)
@@ -4802,7 +4969,6 @@ void rollbackTo(string fsName, string snapName)
  enforce(result == 0, format!"zfs error: %s"(result));
 }
 
-/+
 @SILdoc(`Creates bookmarks.
 
 The bookmarks nvlist maps from name of the bookmark (e.g. "pool/fs#bmark") to
@@ -4815,10 +4981,14 @@ The value will be the (int32) error code.
 The return value will be 0 if all bookmarks were created, otherwise it will
 be the (*__errno_location ()) of a (undetermined) bookmarks that failed.
 `)
-auto createBookmarks(Bookmark[] bookmarks)
+auto createBookmarks(string[string] bookmarks)
 {
+ import std.format:format;
  nvlist_t* errlist;
- auto result = lzc_bookmark(bookmarks.asPtr, &errlist);
+ auto list = getProperties(bookmarks);
+ scope(exit)
+  nvlistFree(list);
+ auto result = lzc_bookmark(list, &errlist);
  enforce(result == 0, format!" zfs error: %s"(result));
 }
 
@@ -4844,12 +5014,13 @@ The format of the returned nvlist as follows:
     }
   }
 `)
-auto getBookmarks(string fsName, Property[] properties)
+auto getBookmarks(string fsName, string[] properties)
 {
  nvlist_t* bmarks;
- auto result = lzc_get_bookmarks(fsName.toStringz, properties.asPtr,&bmarks);
+ auto props = getList(properties);
+ auto result = lzc_get_bookmarks(fsName.toStringz, props,&bmarks);
  enforce(result == 0, "ZFS error");
- return NvList(bmarks);
+ return bmarks;
 }
 
 @SILdoc(`Destroys bookmarks
@@ -4867,15 +5038,17 @@ that failed, no bookmarks will be destroyed, and the errlist will have an
 entry for each bookmarks that failed. The value in the errlist will be
 the (int32) error code.
 `)
-auto destroyBookmarks(Bookmark[] bookmarks)
+auto destroyBookmarks(string[] bookmarks)
 {
  nvlist_t* errlist;
- auto result = lzc_destroy_bookmarks(bookmarks.asPtr,&errlist);
+ auto list = getList(bookmarks);
+ scope(exit)
+  nvlistFree(list);
+ auto result = lzc_destroy_bookmarks(list,&errlist);
  enforce(result == 0, "zfs error");
  return 0;
 }
 
-+/
 @SILdoc(`Executes a channel program
 
 If this function returns 0 the channel program was successfully loaded and
@@ -4908,11 +5081,11 @@ This method may also return:
           limit. Some portion of the channel program may have executed and
           committed changes to disk. No output is returned through 'outnvl'.
 `)
-void executeChannelProgram(string pool, string program, ulong instrLimit = (10 * 1000 * 1000), ulong memLimit=(10 * 1024 * 1024))
+void executeChannelProgram(string pool, string program, string[string] parameters, ulong instrLimit = (10 * 1000 * 1000), ulong memLimit=(10 * 1024 * 1024))
 {
  import std.format: format;
 
- auto params = nvlistAlloc(0x1, 0);
+ auto params = getProperties(parameters);
  scope(exit)
   nvlistFree(params);
  nvlist_t* outnvl;
@@ -4973,11 +5146,10 @@ on-disk state by calling functions from the zfs.sync submodule.
 The return values of this function (and their meaning) are exactly the
 same as the ones described in lzc_channel_program().
 `)
-void executeChannelProgramNoSync(string pool, string program, ulong instrLimit = (10 * 1000 * 1000), ulong memLimit=(10 * 1024 * 1024))
+void executeChannelProgramNoSync(string pool, string program, string[string] parameters, ulong instrLimit = (10 * 1000 * 1000), ulong memLimit=(10 * 1024 * 1024))
 {
  import std.format: format;
-
- auto params = nvlistAlloc(0x1, 0);
+ auto params = getProperties(parameters);
  scope(exit)
   nvlistFree(params);
  nvlist_t* outnvl;
@@ -4986,13 +5158,33 @@ void executeChannelProgramNoSync(string pool, string program, ulong instrLimit =
 }
 
 +/
-auto loadKey(string fsName, bool noOp, ubyte[] wkeyData)
+@SILdoc(`Load or verify encryption key on the specified dataset.
+Params:
+ string fsName: the name of the dataset
+ bool noOp: if true the encryption key will only be verified, not loaded
+ string encryptionKey: dataset encryption key data
+
+Errors:
+    FilesystemNotFound: if the dataset does not exist.
+    EncryptionKeyAlreadyLoaded: if the encryption key is already loaded.
+    EncryptionKeyInvalid: if the encryption key provided is incorrect.
+`)
+auto loadKey(string fsName, bool noOp, string encryptionKey)
 {
  import std.format:format;
- auto result = lzc_load_key(fsName.toCString, noOp ? 1 : 0, wkeyData.ptr, wkeyData.length.to!uint);
+ auto result = lzc_load_key(fsName.toCString, noOp ? 1 : 0, cast(ubyte*)encryptionKey.ptr, encryptionKey.length.to!uint);
  enforce(result ==0, format!"loadkey failed with %s"(result));
 }
 
+@SILdoc(`Unload encryption key from the specified dataset.
+Params:
+ string fsName: the name of the dataset.
+
+Errors:
+ FilesystemNotFound: if the dataset does not exist.
+    DatasetBusy: if the encryption key is still being used. This usually occurs when the dataset is mounted.
+    EncryptionKeyNotLoaded: if the encryption key is not currently loaded.
+`)
 void unloadKey(string fsName)
 {
  import std.format:format;
@@ -5001,17 +5193,48 @@ void unloadKey(string fsName)
 }
 
 
-auto changeKey(string fsName, ulong cryptCommand, ubyte[] wkeyData)
+enum DCP_CMD_NEW_KEY = 0;
+enum DCP_CMD_INHERIT = 1;
+enum DCP_CMD_FORCE_NEW_KEY = 2;
+enum DCP_CMD_FORCE_INHERIT = 3;
+enum EncryptionCommand
+{
+ newKey = DCP_CMD_NEW_KEY,
+ inherit = DCP_CMD_INHERIT,
+ forceNewKey = DCP_CMD_FORCE_NEW_KEY,
+ forceInherit = DCP_CMD_FORCE_INHERIT,
+}
+
+@SILdoc(`Change encryption key on the specified dataset.
+Params:
+ string fsName: the name of the dataset.
+    EncryptionCommand cryptCommand: the encryption "command" to be executed, currently supported values are "new_key", "inherit", "force_new_key" and "force_inherit"
+    string[string] properties: a dictionary of encryption-related property name-value pairs; only "keyformat", "keylocation" and "pbkdf2iters" are supported (empty by default).
+    string[] encryptionKey: dataset encryption key data (empty by default).
+
+Errors:
+    PropertyInvalid: if props contains invalid values.
+    FilesystemNotFound: if the dataset does not exist.
+    UnknownCryptCommand: if cryptCommand is invalid.
+    EncryptionKeyNotLoaded: if the encryption key is not currently loaded and therefore cannot be changed.
+`)
+auto changeKey(string fsName, EncryptionCommand cryptCommand, string encryptionKey, string[string] properties = (string[string]).init)
 {
  import std.format:format;
-
- auto props = nvlistAlloc(0x1, 0);
+ auto props = getProperties(properties);
  scope(exit)
   nvlistFree(props);
- auto result = lzc_change_key(fsName.toCString, cryptCommand, props,wkeyData.ptr, wkeyData.length.to!uint);
+ auto result = lzc_change_key(fsName.toCString, cryptCommand.to!ulong, props,cast(ubyte*)encryptionKey.ptr, encryptionKey.length.to!uint);
  enforce(result ==0, format!"changeKey failed with %s"(result));
 }
 
+@SILdoc(`Reopen a pool
+Params:
+    string pool: the name of the pool.
+    bool restartScrub: whether to restart an in-progress scrub operation.
+Errors:
+    PoolNotFound: if the pool does not exist
+`)
 void reopen(string pool, bool restartScrub = false)
 {
  import std.format:format;
@@ -5032,40 +5255,48 @@ string zfsVersion()
 }
 
 
+@SILdoc(`Check if a dataset (a filesystem, or a volume, or a snapshot) with the given name exists.
+Params:
+ string path: the dataset name to check
+
+Returns:
+ true if the dataset exists, false otherwise
+
+Note:
+ datasetExists cannot be used to check for existence of bookmarks.
+`)
 
 
-
-void cloneSnapshot(string from, string target)
-{
- import std.format:format;
- auto props = nvlistAlloc(0x1, 0);
- scope(exit)
-  nvlistFree(props);
- auto result = lzc_clone(target.toCString, from.toCString, props);
- enforce(result ==0, format!"failed clone: %s %s %s"(from,target,result));
-}
-
-
-
-bool snapshotExists(string path)
+bool datasetExists(string path)
 {
  return lzc_exists(path.toCString) !=0;
 }
 
+@SILdoc(`Create snapshots. All snapshots must be in the same pool. Optionally snapshot properties can be set on all snapshots. Currently only user properties (prefixed with "user:") are supported. Either all snapshots are successfully created or none are created if an exception is raised.
+Params:
+    snapshotNames: a list of names of snapshots to be created.
+    string[string] properties: ZFS dataset property name-value pairs (empty by default).
 
+Errors:
+ SnapshotFailure: if one or more snapshots could not be created.
 
-void snapshot(string[] snapshotNames)
+warning:
+ The underlying implementation reports an individual, per-snapshot error only for SnapshotExists condition and *sometimes* for NameTooLong.
+ In all other cases a single error is reported without connection to any specific snapshot name(s). This has the following implications:
+        * if multiple error conditions are encountered only one of them is reported
+        * unless only one snapshot is requested then it is impossible to tell how many snapshots are problematic and what they are
+        * only if there are no other error conditions :exc:.SnapshotExists is reported for all affected snapshots
+        * :exc:.NameTooLong can behave either in the same way as :exc:.SnapshotExists or as all other exceptions. The former is the case where the full snapshot name exceeds the maximum allowed length but the short snapshot name (after '@') is within the limit. The latter is the case when the short name alone exceeds the maximum allowed length.
+`)
+void snapshot(string[] snapshotNames, string[string] properties = (string[string]).init)
 {
  import std.format:format;
  import std.string: join;
- auto snapshots = nvlistAlloc(0x1, 0);
- foreach(name;snapshotNames)
- {
-  nvlistAddBoolean(snapshots,name);
- }
+ auto snapshots = getList(snapshotNames);
+ scope(exit)
+  nvlistFree(snapshots);
 
-
- auto props = nvlistAlloc(0x1, 0);
+ auto props = getProperties(properties);
  scope(exit)
   nvlistFree(props);
 
@@ -5078,18 +5309,27 @@ void snapshot(string[] snapshotNames)
  }
 }
 
+@SILdoc(`Destroy snapshots. They must all be in the same pool. Snapshots that do not exist will be silently ignored.
+
+If defer is not set, and a snapshot has user holds or clones, the destroy operation will fail and none of the snapshots will be destroyed. If defer is set, and a snapshot has user holds or clones, it will be marked for deferred destruction, and will be destroyed when the last hold or clone is removed/destroyed. The operation succeeds if all snapshots were destroyed (or marked for later destruction if defer is set) or didnt exist to begin with.
+
+Params:
+ string[] snapshotNames: a list of names of snapshots to be destroyed.
+    bool defer: whether to mark busy snapshots for deferred destruction rather than immediately failing.
+
+Errors:
+    SnapshotDestructionFailure: if one or more snapshots could not be created.
+
+note:
+    SnapshotDestructionFailure is a compound exception that provides at least one detailed error object in SnapshotDestructionFailure.errors list. Typical error is SnapshotIsCloned if defer is False. The snapshot names are validated quite loosely and invalid names are typically ignored as nonexisiting snapshots. A snapshot name referring to a filesystem that doesnt exist is ignored. However, non-existent pool name causes PoolNotFound.
+`)
 
 void destroySnapshots(string[] snapshotNames, bool deferDelete)
 {
  import std.format:format;
  import std.string:join;
- auto snapshots = nvlistAlloc(0x1, 0);
+ auto snapshots = getList(snapshotNames);
  scope(exit) nvlistFree(snapshots);
- foreach(name;snapshotNames)
- {
-  nvlistAddBoolean(snapshots, name);
- }
-
  nvlist_t* errList;
  boolean_t cdeferDelete = (deferDelete) ? 1 : 0;
  auto result = lzc_destroy_snaps(snapshots, cdeferDelete, &errList);
@@ -5115,7 +5355,15 @@ void nvlistFree(nvlist_t* cnvlist)
  nvlist_free(cnvlist);
 }
 
-@SILdoc(`Destroy is the wrapper for lzc_destroy`)
+@SILdoc(` Destroy the ZFS dataset.
+Params:
+ string name: the name of the dataset to destroy
+
+Errors:
+    NameInvalid: if the dataset name is invalid.
+    NameTooLong: if the dataset name is too long.
+    FilesystemNotFound: if the dataset does not exist.
+`)
 ZfsResult destroy(string name)
 {
  import std.format:format;
@@ -5159,6 +5407,26 @@ nvpair_t* nextNvPair(nvlist_t* list, nvpair_t* elemArg = null)
  return elem;
 }
 
+nvlist_t* getProperties(string[string] properties)
+{
+    nvlist_t* ret = nvlistAlloc(0x1,0);
+    foreach(entry;properties.byKeyValue)
+    {
+        enforce(nvlist_add_string(ret,entry.key.toCString,entry.value.toCString)==0, "allocating properties");
+    }
+    return ret;
+}
+
+nvlist_t* getList(string[] values)
+{
+    nvlist_t* ret = nvlistAlloc(0x1,0);
+    foreach(value;values)
+    {
+        nvlistAddBoolean(ret,value);
+    }
+    return ret;
+}
+
 
 
 void nvlistAddBoolean(nvlist_t* nvlist, string name)
@@ -5173,39 +5441,55 @@ bool isNvlistEmpty(nvlist_t* cnvlist)
  return (nvlist_empty(cnvlist) !=0);
 }
 
+string[string] asDict(nvlist_t* list)
+{
+ string[string] ret;
+ auto pair = nextNvPair(list,null);
+ while( pair !is null)
+ {
+  auto name = nvpair_name(pair).fromCString.idup;
+  char* val;
+  auto result = nvpair_value_string(pair, &val);
+  enforce(result ==0);
+  ret[name] = val.fromCString.idup;
+  pair = nvlist_next_nvpair(list,pair);
+ }
+ return ret;
+}
 
 
 
 
-void createFileSystem(string path, void* datasetType=null, void* properties=null, ubyte[] wkeyData =[])
+
+@SILdoc(`Create a ZFS filesystem
+Params:
+ string name - name of the dataset to be created
+ string[string] properties - a dictionary od ZFS dataset property name-value pairs
+ ubyte[] encryptionKey - dataset encryption key data
+
+Errors:
+ FilesystemExists - if a dataset with the given name already exists
+ ParentNotFound - if a parent dataset of the requested dataset does not exist
+ PropertyInvalid - if one or more of specified properties does not exist or has an invalid type or value
+ NameInvalid - if the name is not a valid dataset name
+ NameTooLong - if the name is too long
+ WrongParent - if the parent dataset of the requested dataset is not a filesystem eg zvol
+`)
+
+void createFileSystem(string path, string[string] properties = (string[string]).init, string encryptionKey=null)
 {
  import std.format:format;
- auto props = nvlistAlloc(0x1, 0);
+ auto props = getProperties(properties);
  enforce(props !is null, "alloc failure for props for "~path );
  scope(exit)
   nvlistFree(props);
 
  auto cpath = path.toCString;
-
- auto result = lzc_create(cpath, LZC_DATSET_TYPE_ZFS, props,null,0);
+ auto result = lzc_create(cpath, LZC_DATSET_TYPE_ZFS, props,cast(ubyte*)encryptionKey.ptr,encryptionKey.length.to!uint);
  enforce(result ==0, format!"Failed libzfs_core create: %s"(result));
 }
 
-void destroyFileSystem(string path)
-{
- throw new Exception("Not implemented");
-}
 
-auto getSnapshotSpace()
-{
- throw new Exception("Not implemented");
-}
-
-auto getFSAndDescendantsSpace(string fs)
-{
-
-
-}
 
 ZfsResult validate(string zpool)
 {
@@ -5230,7 +5514,8 @@ auto zfsResult(bool success, ZfsError status, string message)
 }
 
 
-void main(string[] args)
+@("libzfs_core")
+unittest
 {
  import std.stdio;
 
@@ -5240,4 +5525,8 @@ void main(string[] args)
  writeln("success creating");
  destroySnapshots(testSnap,false);
  writeln("success destroying");
+ create("tank3/shared/foo",DatasetType.zfs);
+ writeln("success creating tank3/shared/foo");
+ destroy("tank3/shared/foo");
+ writeln("success destroying tank3/shared/foo");
 }
