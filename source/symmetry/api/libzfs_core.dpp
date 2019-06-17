@@ -1073,7 +1073,6 @@ void discardCheckpoint(string pool)
 	//enforce(result != ZFS_VDEV_TOO_BIG,"One or more top-level vdevs exceed max vdev size supported for this feature");
 }
 
-/+
 @SILdoc(`
 Executes a read-only channel program.
 
@@ -1097,14 +1096,6 @@ void executeChannelProgramNoSync(string pool, string program, string[string] par
 	enforce(result == 0, format!"zfs error: %s"(result));
 }
 
-+/
-/*
- * Performs key management functions
- *
- * crypto_cmd should be a value from dcp_cmd_t. If the command specifies to
- * load or change a wrapping key, the key should be specified in the
- * hidden_args nvlist so that it is not logged.
- */
 
 @SILdoc(`Load or verify encryption key on the specified dataset.
 Params:
