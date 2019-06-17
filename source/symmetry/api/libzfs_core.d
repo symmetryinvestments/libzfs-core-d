@@ -4084,10 +4084,11 @@ alias fromCString = fromStringz;
 struct SILdoc {string value; }
 
 
-extern(C) int lzc_destroy_one(const(char) *fsname, nvlist_t *);
-extern(C) int lzc_inherit(const(char)*fsname, const(char)*name, nvlist_t *);
-extern(C) int lzc_set_props(const(char)*, nvlist_t *, nvlist_t *, nvlist_t *);
-extern(C) int lzc_list(const(char)*, nvlist_t*);
+
+
+
+
+extern(C) __gshared int g_fd, g_refcount;
 
 enum DatasetType
 {
@@ -4560,6 +4561,151 @@ nvlist_t* asList(ZfsValue[string] values)
    case ZfsValue.
 +/
 
+string[string] zfsIoctl(zfs_ioc_t ioc, string name, string[string] args)
+{
+ import std.format:format;
+ auto props = getProperties(args);
+ scope(exit)
+  nvlistFree(props);
+ nvlist_t* resultp;
+ auto ret = lzc_ioctl(ioc,name.toCString, props,&resultp);
+ enforce(ret == 0, format!"error calling lzc_ioctl: %s"(ret));
+ return resultp.asDict;
+}
+extern(C) size_t strlcpy ( char * dest, const(char) * src, size_t size);
+
+
+struct zfs_cmd_t
+{
+ char[4096] zc_name;
+ ulong zc_nvlist_src;
+ ulong zc_nvlist_src_size;
+ ulong zc_nvlist_dst;
+ ulong zc_nvlist_dst_size;
+ boolean_t zc_nvlist_dst_filled;
+ int zc_pad2;
+
+
+
+
+
+ ulong zc_history;
+ char[4096 * 2] zc_value;
+
+ ulong zc_guid;
+ ulong zc_nvlist_conf;
+ ulong zc_nvlist_conf_size;
+ ulong zc_cookie;
+ ulong zc_objset_type;
+ ulong zc_perm_action;
+ ulong zc_history_len;
+ ulong zc_history_offset;
+ ulong zc_obj;
+ ulong zc_iflags;
+
+
+
+
+ uint zc_defer_destroy;
+ uint zc_flags;
+ ulong zc_action_handle;
+ int zc_cleanup_fd;
+ ubyte zc_simple;
+ ubyte[3] zc_pad;
+ ulong zc_sendobj;
+ ulong zc_fromobj;
+ ulong zc_createtxg;
+
+}
+int lzc_ioctl(zfs_ioc_t ioc, const(char)* name, nvlist_t* source, nvlist_t** resultp)
+{
+ import std.algorithm:max;
+ import core.sys.posix.sys.ioctl;
+ zfs_cmd_t zc = {zc_name:"\0"};
+ int error = 0;
+ char *packed = null;
+ size_t size = 0;
+
+
+
+
+version(ZFS_DEBUG)
+{
+ if (ioc == fail_ioc_cmd)
+  return (fail_ioc_err);
+}
+
+ if (name !is null)
+  cast (void) strlcpy(zc.zc_name.ptr, name, zc.zc_name.sizeof);
+
+ if (source !is null) {
+  packed = fnvlist_pack(source, &size);
+  zc.zc_nvlist_src = cast(ulong)cast(uint*)packed;
+  zc.zc_nvlist_src_size = size;
+ }
+
+ if (resultp !is null) {
+  *resultp = null;
+  if (ioc == ZFS_IOC_CHANNEL_PROGRAM) {
+   zc.zc_nvlist_dst_size = fnvlist_lookup_uint64(source, "memlimit");
+  } else {
+   zc.zc_nvlist_dst_size = max(size * 2, 128 * 1024);
+  }
+  zc.zc_nvlist_dst = cast(ulong)cast(uint*) malloc(zc.zc_nvlist_dst_size);
+  if (zc.zc_nvlist_dst == 0UL) {
+   error = 12;
+   goto out_;
+  }
+ }
+
+ while (ioctl(g_fd, ioc, &zc) != 0) {
+
+
+
+
+
+
+
+  if ((*__errno_location ()) == 12 && resultp !is null &&
+      ioc != ZFS_IOC_CHANNEL_PROGRAM) {
+   free(cast(void *)cast(uint*)zc.zc_nvlist_dst);
+   zc.zc_nvlist_dst_size *= 2;
+   zc.zc_nvlist_dst = cast(ulong)cast(uint*)malloc(zc.zc_nvlist_dst_size);
+   if (zc.zc_nvlist_dst == 0UL) {
+    error = 12;
+    goto out_;
+   }
+  } else {
+   error = (*__errno_location ());
+   break;
+  }
+ }
+ if (zc.zc_nvlist_dst_filled) {
+  *resultp = fnvlist_unpack(cast(char*)cast(uint*)zc.zc_nvlist_dst, zc.zc_nvlist_dst_size);
+ }
+
+out_:
+ if (packed !is null)
+  fnvlist_pack_free(packed, size);
+ free(cast(void *)cast(uint*)zc.zc_nvlist_dst);
+ return (error);
+}
+string[string] datasetListNext(string name, string[string] args)
+{
+ return zfsIoctl(ZFS_IOC_DATASET_LIST_NEXT,name,args);
+}
+
+string[string] snapshotListNext(string name, string[string] args)
+{
+ return zfsIoctl(ZFS_IOC_SNAPSHOT_LIST_NEXT,name,args);
+}
+
+
+string[string] zfsInheritProperties(string name, string[string] args)
+{
+ return zfsIoctl(ZFS_IOC_SNAPSHOT_LIST_NEXT,name,args);
+}
+
 @SILdoc(`Create a ZFS filesystem or a ZFS volume (zvol)
 Params:
  string name - name of the dataset to be created
@@ -4571,16 +4717,7 @@ Errors:
  FilesystemExists - if a dataset with the given name already exists
  ParentNotFound - if a parent dataset of the requested dataset does not exist
  PropertyInvalid - if one or more of specified properties does not exist or has an invalid type or value
- NameInvalid - if the name is not a valid datsource/symmetry/api/libzfs_core.d.tmp:6343:67: warning: missing terminating ' character
-     NameTooLong: if the dataset name is too longor  if the dataset's origin has a snapshot that, if transferred to the dataset, would get a too long name.
-                                                                   ^
-source/symmetry/api/libzfs_core.d.tmp:6346:98: warning: missing terminating ' character
-     SnapshotExists: if the dataset already has a snapshot with the same name as one of the origin's snapshots.
-                                                                                                  ^
-source/symmetry/api/libzfs_core.d.tmp:6366:38: warning: missing terminating ' character
-     FilesystemNotFound: if the target's parent does not exist.
-                                      ^
-aset name
+ NameInvalid - if the name is not a valid dataset name
  NameTooLong - if the name is too long
  WrongParent - if the parent dataset of the requested dataset is not a filesystem eg zvol
 `)
@@ -4606,7 +4743,16 @@ Errors:
  PropertyInvalid: if one or more of the specified properties is invalid or has an invalid type or value.
  FilesystemNameInvalid: if the name is not a valid dataset name.
  SnapshotNameInvalid: if the origin is not a valid snapshot name.
- NameTooLong: if the name or the origin name is too long.
+ NameTooLong: if the name or the orsource/symmetry/api/libzfs_core.d.tmp:6489:67: warning: missing terminating ' character
+     NameTooLong: if the dataset name is too longor  if the dataset's origin has a snapshot that, if transferred to the dataset, would get a too long name.
+                                                                   ^
+source/symmetry/api/libzfs_core.d.tmp:6492:98: warning: missing terminating ' character
+     SnapshotExists: if the dataset already has a snapshot with the same name as one of the origin's snapshots.
+                                                                                                  ^
+source/symmetry/api/libzfs_core.d.tmp:6512:38: warning: missing terminating ' character
+     FilesystemNotFound: if the target's parent does not exist.
+                                      ^
+igin name is too long.
  PoolsDiffer: if the clone and the origin have different pool names.
 Note:
  Because of a deficiency of the underlying C interface DatasetNotFound can mean that either a parent filesystem of the target or the origin snapshot does not exist. It is currently impossible to distinguish between the cases.
@@ -4850,9 +4996,9 @@ auto sendResume(string snapshotName, string fromSnapshot, int fileDescriptor, Se
 }
 
 @SILdoc(`
-"from" can be (cast(void*)0), a snapshot, or a bookmark.
+"from" can be null, a snapshot, or a bookmark.
 
-If from is (cast(void*)0), a full (non-incremental) stream will be estimated. This
+If from is null, a full (non-incremental) stream will be estimated. This
 is calculated very efficiently.
 
 If from is a snapshot, lzc_send_space uses the deadlists attached to
@@ -4884,7 +5030,7 @@ auto sendSpace(string snapshotName, string from, SendFlag[] flags)
  *
  * Non-Linux OpenZFS platforms have opted to modify the legacy interface.
  */
-int recv_impl(const char *snapname, nvlist_t *recvdprops, nvlist_t *localprops, uint8_t *wkeydata, uint_t wkeylen, const char *origin, boolean_t force, boolean_t resumable, boolean_t raw, int input_fd, const dmu_replay_record *begin_record, int cleanup_fd, uint64_t *read_bytes, uint64_t *errflags, uint64_t *action_handle, nvlist_t **errors)
+int recv_impl(const char *snapname, nvlist_t *recvdprops, nvlist_t *localprops, ubyte *wkeydata, uint_t wkeylen, const char *origin, boolean_t force, boolean_t resumable, boolean_t raw, int input_fd, const dmu_replay_record *begin_record, int cleanup_fd, ulong *read_bytes, ulong *errflags, ulong *action_handle, nvlist_t **errors)
 
 +/
 
@@ -5029,9 +5175,9 @@ The following are valid properties on bookmarks, all of which are numbers
 "creation" - timestamp when the snapshot it refers to was created
 
 The format of the returned nvlist as follows:
- <short name of bookmark> -> {
-    <name of property> -> {
-         "value" -> uint64
+ <short name of bookmark> . {
+    <name of property> . {
+         "value" . uint64
     }
   }
 `)
@@ -5361,6 +5507,7 @@ void destroySnapshots(string[] snapshotNames, bool deferDelete)
  }
 }
 
+/+
 @SILdoc(`Destroy the ZFS dataset.
 Params:
  string datasetName: the name of the dataset to destroy.
@@ -5382,7 +5529,7 @@ void destroyDataset(string datasetName)
   enforce(ret2.length ==0, format!"failed libzfs_core snapshot: %s, %s"(datasetName,ret2.join(",")));
  }
 }
-
++/
 
 @SILdoc(`Inherit properties from a parent dataset of the given ZFS dataset.
 Params:
@@ -5402,14 +5549,13 @@ void inheritProperties(string name, string property)
  import std.format:format;
  import std.string:join;
  nvlist_t* errList;
-    auto result = lzc_inherit(name.toCString, property.toCString, null);
+    auto result = -1;
  if (result != 0)
  {
   auto ret2 = processErrorList(errList);
   enforce(ret2.length ==0, format!" failed libzfs_core inheritProperties: %s, %s, %s"(name,property,ret2.join(",")));
  }
 }
-
 
 @SILdoc(`Set properties of the ZFS dataset.
 Params:
@@ -5435,7 +5581,8 @@ void setDatasetProperties(string name, string[string] properties)
     auto props = getProperties(properties);
  scope(exit)
   nvlistFree(props);
-    auto result = lzc_set_props(name.toCString, props, null,null);
+
+ auto result = -1;
  if (result != 0)
  {
   auto ret2 = processErrorList(errList);
@@ -5483,12 +5630,15 @@ auto listImpl(string name, string[string] options)
     fcntl(pipefd[1], F_SETFD, FD_CLOEXEC);
     options["fd"] = pipefd[1].to!string;
  auto copts = getProperties(options);
+/+
     auto result = lzc_list(name.toCString,copts);
     if (result == 3)
         return PipePair(-1,-1);
 
++/
     return PipePair(pipefd[0],pipefd[1]);
 }
+
 
 struct PipeRecord
 {
@@ -5575,7 +5725,7 @@ The value of clones property is a list of clone names as strings.
 warning:
  The returned dictionary does not contain entries for properties with default values. One exception is the mountpoint property for which the default value is derived from the dataset name.
 `)
-string[string] getProperties(string name)
+string[string] getDatasetProperties(string name)
 {
  import std.format:format;
  import std.string: startsWith;
@@ -5716,7 +5866,7 @@ Errors:
     NameTooLong: if the dataset name is too long.
     FilesystemNotFound: if the dataset does not exist.
 `)
-ZfsResult destroy(string name)
+ZfsResult destroyDataset(string name)
 {
  import std.format:format;
  auto result = lzc_destroy(name.toCString);

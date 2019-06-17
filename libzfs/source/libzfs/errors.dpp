@@ -1,0 +1,109 @@
+module libzfs.errors;
+
+#include <assert.h>
+#include <libnvpair.h>
+#include <sys/mnttab.h>
+#include <sys/param.h>
+#include <sys/types.h>
+#include <sys/varargs.h>
+#include <sys/fs/zfs.h>
+#include <sys/avl.h>
+#include <ucred.h>
+#include <libzfs_core.h>
+
+
+// zfs_error_t
+enum ZfsError
+{
+	success = 					EZFS_SUCCESS,			// no error -- success
+	outOfMemory = 				EZFS_NOMEM 				// out of memory
+	invalidPropertyValue = 		EZFS_BADPROP,			// invalid property value
+	cannotSetReadOnlyProperty = EZFS_PROPREADONLY,		// cannot set readonly property
+	EZFS_PROPTYPE,		/* property does not apply to dataset type */
+	EZFS_PROPNONINHERIT,	/* property is not inheritable */
+	EZFS_PROPSPACE,		/* bad quota or reservation */
+	EZFS_BADTYPE,		/* dataset is not of appropriate type */
+	EZFS_BUSY,		/* pool or dataset is busy */
+	EZFS_EXISTS,		/* pool or dataset already exists */
+	EZFS_NOENT,		/* no such pool or dataset */
+	EZFS_BADSTREAM,		/* bad backup stream */
+	EZFS_DSREADONLY,	/* dataset is readonly */
+	EZFS_VOLTOOBIG,		/* volume is too large for 32-bit system */
+	EZFS_INVALIDNAME,	/* invalid dataset name */
+	EZFS_BADRESTORE,	/* unable to restore to destination */
+	EZFS_BADBACKUP,		/* backup failed */
+	EZFS_BADTARGET,		/* bad attach/detach/replace target */
+	EZFS_NODEVICE,		/* no such device in pool */
+	EZFS_BADDEV,		/* invalid device to add */
+	EZFS_NOREPLICAS,	/* no valid replicas */
+	EZFS_RESILVERING,	/* currently resilvering */
+	EZFS_BADVERSION,	/* unsupported version */
+	EZFS_POOLUNAVAIL,	/* pool is currently unavailable */
+	EZFS_DEVOVERFLOW,	/* too many devices in one vdev */
+	EZFS_BADPATH,		/* must be an absolute path */
+	EZFS_CROSSTARGET,	/* rename or clone across pool or dataset */
+	EZFS_ZONED,		/* used improperly in local zone */
+	EZFS_MOUNTFAILED,	/* failed to mount dataset */
+	EZFS_UMOUNTFAILED,	/* failed to unmount dataset */
+	EZFS_UNSHARENFSFAILED,	/* unshare(1M) failed */
+	EZFS_SHARENFSFAILED,	/* share(1M) failed */
+	permissionDenied = 			EZFS_PERM,				//  permission denied
+	outOfSpace = 				EZFS_NOSPC,				// out of space
+	badAddress = 				EZFS_FAULT,				// bad address
+	ioError = 					EZFS_IO,				// I/O error
+	signalReceived = 			EZFS_INTR,				// signal received
+	isHotSpare = 				EZFS_ISSPARE,			// device is a hot spare
+	invalidVdevConfig = 		EZFS_INVALCONFIG,		// invalid vdev configuration
+	recursiveDependency =		EZFS_RECURSIVE,			// recursive dependency
+	noHistoryObject = 			EZFS_NOHISTORY,			// no history object
+	couldntRetrievePoolProps = 	EZFS_POOLPROPS,			// couldn't retrieve pool props
+	poolNotSupported = 			EZFS_POOL_NOTSUP,		// ops not supported for this type of pool
+	poolInvalidArgument = 		EZFS_POOL_INVALARG,		// invalid argument for this pool operation
+	datasetNameTooLong = 		EZFS_NAMETOOLONG,		// dataset name is too long
+	openDeviceFailed = 			EZFS_OPENFAILED,		// open of device failed
+	noCapacity = 				EZFS_NOCAP,				// couldn't get capacity
+	writeLabelFailed = 			EZFS_LABELFAILED,		// write of label failed
+	invalidPermissionWho = 		EZFS_BADWHO,			// invalid permission who
+	invalidPermission = 		EZFS_BADPERM,			// invalid permission
+	badPermissionSetName = 		EZFS_BADPERMSET,		// invalid permission set name
+	disabledDelegatedAdmin = 	EZFS_NODELEGATION,		// delegated administration is disabled
+	failedSMBUnshare = 			EZFS_UNSHARESMBFAILED,	// failed to unshare over smb
+	failedSMBShare = 			EZFS_SHARESMBFAILED,	// failed to share over smb
+	badCacheFile = 				EZFS_BADCACHE,			// bad cache file
+	isLevel2ARC = 				EZFS_ISL2CACHE,			// device is for the level 2 ARC
+	unsupportedVdevType =		EZFS_VDEVNOTSUP,		// unsupported vdev type
+	operationNotSupported = 	EZFS_NOTSUP,			// ops not supported on this dataset
+	activeSpare = 				EZFS_ACTIVE_SPARE,		// pool has active shared spare devices
+	unplayedLogs = 				EZFS_UNPLAYED_LOGS,		// log device has unplayed logs
+	snapshotRelTagNotFound = 	EZFS_REFTAG_RELE,		// snapshot release: tag not found
+	snapshotHoldTagExists = 	EZFS_REFTAG_HOLD,		// snapshot hold: tag already exists
+	tagTooLong = 				EZFS_TAGTOOLONG,		// snapshot hold/rele: tag too long
+	pipeCreateFailed = 			EZFS_PIPEFAILED,		// pipe create failed
+	threadCreateFailed = 		EZFS_THREADCREATEFAILED, //   thread create failed
+	onlinePostSplit = 			EZFS_POSTSPLIT_ONLINE,	// onlining a disk after splitting it
+	currentlyScrubbing = 		EZFS_SCRUBBING,			// currently scrubbing
+	noActiveScrub = 			EZFS_NO_SCRUB,			// no active scrub
+	generalFailureZFSDiff = 	EZFS_DIFF,				// general failure of zfs diff
+	badZFSDiffData = 			EZFS_DIFFDATA,			// bad zfs diff data
+	poolReadOnlyMode =			EZFS_POOLREADONLY,		// pool is in read-only mode
+	scrubCurrentlyPaused = 		EZFS_SCRUB_PAUSED,		// scrub currently paused
+	poolActiveOtherSystem = 	EZFS_ACTIVE_POOL,		// pool is imported on a different system
+	cryptoFailed = 				EZFS_CRYPTOFAILED,		// failed to setup encryption
+	noOperationPending = 		EZFS_NO_PENDING,		// cannot cancel, no operation is pending
+	checkpointExists = 			EZFS_CHECKPOINT_EXISTS,	// checkpoint exists
+	discardingCheckpoint = 		EZFS_DISCARDING_CHECKPOINT,	// currently discarding a checkpoint
+	noCheckpoint = 				EZFS_NO_CHECKPOINT,		// pool has no checkpoint
+	deviceRemovalInProgress = 	EZFS_DEVRM_IN_PROGRESS,	// a device is currently being removed
+	vdevTooBig = 				EZFS_VDEV_TOO_BIG,		// a device is too big to be used
+	operationNotSupportedZfs = 	EZFS_IOC_NOTSUPPORTED,	// operation not supported by zfs module
+	tooManyArguments = 			EZFS_TOOMANY,			// argument list too long
+	initializing, 				EZFS_INITIALIZING,		// currently initializing
+	noActiveInitialize, 		EZFS_NO_INITIALIZE,		// no active initialize
+	invalidParentDataset,		EZFS_WRONG_PARENT,		// invalid parent dataset (e.g ZVOL)
+	currentlyTrimming = 		EZFS_TRIMMING,			// currently trimming
+	noActiveTrim = 				EZFS_NO_TRIM,			// no active trim
+	trimNotSupported = 			EZFS_TRIM_NOTSUP,		// device does not support trim
+	noResilverDeferSupported = 	EZFS_NO_RESILVER_DEFER,	// pool doesn't support resilver_defer
+	unknown
+}
+

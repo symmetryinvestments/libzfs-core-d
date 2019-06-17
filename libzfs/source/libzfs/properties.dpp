@@ -1,0 +1,732 @@
+
+#include <assert.h>
+#include <libnvpair.h>
+#include <sys/mnttab.h>
+#include <sys/param.h>
+#include <sys/types.h>
+#include <sys/varargs.h>
+#include <sys/fs/zfs.h>
+#include <sys/avl.h>
+#include <ucred.h>
+#include <libzfs_core.h>
+
+#define	ZFS_MAXPROPLEN		MAXPATHLEN
+#define	ZPOOL_MAXPROPLEN	MAXPATHLEN
+
+
+
+// zfs_prop_t
+enum ZfsPropertyType
+{
+	cont = ZPROP_CONT,
+	invalid = ZPROP_INVAL,
+	type = ZFS_PROP_TYPE,
+	creation = ZFS_PROP_CREATION,
+	used = ZFS_PROP_USED,
+	available = ZFS_PROP_AVAILABLE,
+	referenced = ZFS_PROP_REFERENCED,
+	compressRatio = ZFS_PROP_COMPRESSRATIO,
+	mounted = ZFS_PROP_MOUNTED,
+	origin = ZFS_PROP_ORIGIN,
+	quota = ZFS_PROP_QUOTA,
+	reservation = ZFS_PROP_RESERVATION,
+	volumeSize = ZFS_PROP_VOLSIZE,
+	volumeBlockSize = ZFS_PROP_VOLBLOCKSIZE,
+	recordSize = ZFS_PROP_RECORDSIZE,
+	mountPoint = ZFS_PROP_MOUNTPOINT,
+	shareNFS = ZFS_PROP_SHARENFS,
+	checksum = ZFS_PROP_CHECKSUM,
+	compression = ZFS_PROP_COMPRESSION,
+	atime = ZFS_PROP_ATIME,
+	devices = ZFS_PROP_DEVICES,
+	exec = ZFS_PROP_EXEC,
+	setuid = ZFS_PROP_SETUID,
+	readOnly = ZFS_PROP_READONLY,
+	zoned = ZFS_PROP_ZONED,
+	snapDir = ZFS_PROP_SNAPDIR,
+	private_ = ZFS_PROP_PRIVATE,		/* not exposed to user, temporary */
+	aclInherit = ZFS_PROP_ACLINHERIT,
+	createTXG = ZFS_PROP_CREATETXG,
+	name = ZFS_PROP_NAME,			/* not exposed to the user */
+	canMount = ZFS_PROP_CANMOUNT,
+	iscsiOptions = ZFS_PROP_ISCSIOPTIONS,		/* not exposed to the user */
+	xattr = ZFS_PROP_XATTR,
+	numClones = ZFS_PROP_NUMCLONES,		/* not exposed to the user */
+	copies = ZFS_PROP_COPIES,
+	version_= ZFS_PROP_VERSION,
+	utf8Only = ZFS_PROP_UTF8ONLY,
+	normalize = ZFS_PROP_NORMALIZE,
+	case_ = ZFS_PROP_CASE,
+	vscan = ZFS_PROP_VSCAN,
+	nbmand = ZFS_PROP_NBMAND,
+	shareSMB = ZFS_PROP_SHARESMB,
+	refQuota = ZFS_PROP_REFQUOTA,
+	refReservation = ZFS_PROP_REFRESERVATION,
+	guid = ZFS_PROP_GUID,
+	primaryCache = ZFS_PROP_PRIMARYCACHE,
+	secondaryCache = ZFS_PROP_SECONDARYCACHE,
+	usedSnap = ZFS_PROP_USEDSNAP,
+	usedDataset = ZFS_PROP_USEDDS,
+	usedChild = ZFS_PROP_USEDCHILD,
+	usedRefReserv = ZFS_PROP_USEDREFRESERV,
+	userAccounting = ZFS_PROP_USERACCOUNTING,	/* not exposed to the user */
+	stmfShareInfo = ZFS_PROP_STMF_SHAREINFO,	/* not exposed to the user */
+	deferDestroy = ZFS_PROP_DEFER_DESTROY,
+	userRefs = ZFS_PROP_USERREFS,
+	logBias = ZFS_PROP_LOGBIAS,
+	unique = ZFS_PROP_UNIQUE,		/* not exposed to the user */
+	objSetID = ZFS_PROP_OBJSETID,
+	dedup = ZFS_PROP_DEDUP,
+	mlsLabel = ZFS_PROP_MLSLABEL,
+	sync = ZFS_PROP_SYNC,
+	dNodeSize = ZFS_PROP_DNODESIZE,
+	refRatio = ZFS_PROP_REFRATIO,
+	written = ZFS_PROP_WRITTEN,
+	clones = ZFS_PROP_CLONES,
+	logicalUsed = ZFS_PROP_LOGICALUSED,
+	logicalReferenced = ZFS_PROP_LOGICALREFERENCED,
+	inconsistent = ZFS_PROP_INCONSISTENT,		/* not exposed to the user */
+	volMode = ZFS_PROP_VOLMODE,
+	filesystemLimit = ZFS_PROP_FILESYSTEM_LIMIT,
+	snapshotLimit = ZFS_PROP_SNAPSHOT_LIMIT,
+	filesystemCount = ZFS_PROP_FILESYSTEM_COUNT,
+	snapshotCount = ZFS_PROP_SNAPSHOT_COUNT,
+	snapdev = ZFS_PROP_SNAPDEV,
+	aclType = ZFS_PROP_ACLTYPE,
+	selinuxContext = ZFS_PROP_SELINUX_CONTEXT,
+	selinuxFSContext = ZFS_PROP_SELINUX_FSCONTEXT,
+	selinuxDefContext = ZFS_PROP_SELINUX_DEFCONTEXT,
+	selinuxRootContext = ZFS_PROP_SELINUX_ROOTCONTEXT,
+	relatime = ZFS_PROP_RELATIME,
+	redundantMetadata = ZFS_PROP_REDUNDANT_METADATA,
+	overlay = ZFS_PROP_OVERLAY,
+	prevSnap = ZFS_PROP_PREV_SNAP,
+	receiveResumeToken = ZFS_PROP_RECEIVE_RESUME_TOKEN,
+	encryption = ZFS_PROP_ENCRYPTION,
+	keyLocation = ZFS_PROP_KEYLOCATION,
+	keyFormat = ZFS_PROP_KEYFORMAT,
+	pbkdf2Salt = ZFS_PROP_PBKDF2_SALT,
+	pbkdf2Iters = ZFS_PROP_PBKDF2_ITERS,
+	encryptionRoot = ZFS_PROP_ENCRYPTION_ROOT,
+	keyGUID = ZFS_PROP_KEY_GUID,
+	keyStatus = ZFS_PROP_KEYSTATUS,
+	remapTXG = ZFS_PROP_REMAPTXG,		/* not exposed to the user */
+	specialSmallBlocks = ZFS_PROP_SPECIAL_SMALL_BLOCKS,
+	ivsetGUID = ZFS_PROP_IVSET_GUID,		/* not exposed to the user */
+	numProps = ZFS_NUM_PROPS
+}
+
+string propertyDefaultString(ZfsPropertyType prop)
+{
+	return zfs_prop_default_string(prop.to!zfs_prop_t).fromCString.idup;
+}
+
+ulong propertyDefaultNumeric(ZfsPropertyType prop)
+{
+	return zfs_prop_default_numeric(prop.to!zfs_prop_t);
+}
+
+string propertyColumnName(ZfsPropertyType prop)
+{
+	return zfs_prop_column_name(ptop.to!zfs_prop_t).fromCString.idup;
+}
+
+bool propertyAlignRIght(ZfsPropertyType prop)
+{
+	return (zfs_prop_align_right(ptop.to!zfs_prop_t) != 0);
+}
+
+extern nvlist_t *zfs_valid_proplist(libzfs_handle_t *, zfs_type_t, nvlist_t *, ulong, zfs_handle_t *, zpool_handle_t *, boolean_t, const char *);
+
+string propertyToName(ZfsPropertyType prop)
+{
+	return zfs_prop_to_name(prop.to!zfs_prop_t).fromCString.idup;
+}
+
+void setProperty(ZfsHandle handle, string name, string value)
+{
+	auto result = zfs_prop_set(handle.handle,name.toCString,value.toCString);
+	enforce(result == 0);
+}
+
+void setProperty(ZfsHandle handle, nvlist_t* list)
+{
+	auto result = zfs_prop_set_list(handle.handle,list);
+	enforce(result == 0);
+}
+
+ulong getPropertyInteger(ZfsHandle handle, ZfsPropertyType prop)
+{
+	return zfs_prop_get_int(handle.handle, prop.to!zfs_prop_t);
+}
+
+string propertyValues(ZfsPropertyType prop)
+{
+	return zfs_prop_values(prop.to!zfs_prop_t).fromCString.idup;
+}
+
+bool propertyIsString(ZfsPropertyType prop)
+{
+	return (zfs_prop_is_string(prop.to!zfs_prop_t) != 0);
+}
+
+extern int zfs_prop_get(zfs_handle_t *, zfs_prop_t, char *, size_t, zprop_source_t *, char *, size_t, boolean_t);
+extern int zfs_prop_get_recvd(zfs_handle_t *, const char *, char *, size_t, boolean_t);
+extern int zfs_prop_get_numeric(zfs_handle_t *, zfs_prop_t, ulong *, zprop_source_t *, char *, size_t);
+
+ulong getPropertyUserQuoteInteger(ZfsHandle handle, string propertyName)
+{
+	ulong ret;
+	auto result = zfs_prop_get_userquota_int(handle.handle,propertyName.toCString, &ret);
+	enforce(result == 0);
+	return retl
+}
+
+extern int zfs_prop_get_userquota(zfs_handle_t *zhp, const char *propname, char *propbuf, int proplen, boolean_t literal);
+extern int zfs_prop_get_written_int(zfs_handle_t *zhp, const char *propname, ulong *propvalue);
+extern int zfs_prop_get_written(zfs_handle_t *zhp, const char *propname, char *propbuf, int proplen, boolean_t literal);
+extern int zfs_prop_get_feature(zfs_handle_t *zhp, const char *propname, char *buf, size_t len);
+extern ulong getprop_uint64(zfs_handle_t *, zfs_prop_t, char **);
+extern int zfs_prop_inherit(zfs_handle_t *, const char *, boolean_t);
+
+nvlist_t* getAllProperties(ZfsHandle handle)
+{
+	return zfs_get_all_props(handle.handle);
+}
+
+nvlist_t* getUserProperties(ZfsHandle handle)
+{
+	return zfs_get_user_props(handle.handle);
+}
+
+nflist_t* getReceivedProperties(ZfsHandle handle)
+{
+	return zfs_get_recvd_props(handle.handle);
+}
+nvlist_t* getClonesList(ZfsHandle handle)
+{
+	return zfs_get_clones_nvl(handle.handle);
+}
+
+
+
+
+typedef struct zprop_list {
+	int		pl_prop;
+	char		*pl_user_prop;
+	struct zprop_list *pl_next;
+	boolean_t	pl_all;
+	size_t		pl_width;
+	size_t		pl_recvd_width;
+	boolean_t	pl_fixed;
+} zprop_list_t;
+
+extern int zfs_expand_proplist(zfs_handle_t *, zprop_list_t **, boolean_t, boolean_t);
+extern void zfs_prune_proplist(zfs_handle_t *, uint8_t *);
+
+/*
+ * zpool property management
+ */
+extern const char *zpool_prop_default_string(zpool_prop_t);
+extern ulong zpool_prop_default_numeric(zpool_prop_t);
+extern const char *zpool_prop_column_name(zpool_prop_t);
+extern boolean_t zpool_prop_align_right(zpool_prop_t);
+
+/*
+ * Functions shared by zfs and zpool property management.
+ */
+extern int zprop_iter(zprop_func func, void *cb, boolean_t show_all,
+    boolean_t ordered, zfs_type_t type);
+extern int zprop_get_list(libzfs_handle_t *, char *, zprop_list_t **,
+    zfs_type_t);
+extern void zprop_free_list(zprop_list_t *);
+
+#define	ZFS_GET_NCOLS	5
+
+// zfs_get_column_t
+enum ZfsGetColumn
+{
+	none = GET_COL_NONE,
+	name = GET_COL_NAME,
+	property = GET_COL_PROPERTY,
+	value = GET_COL_VALUE,
+	received = GET_COL_RECVD,
+	source = GET_COL_SOURCE.
+}
+
+struct ZfsPropertyPrint
+{
+	int cbSources;
+	ZfsGetColumn[] columnTypes;
+	int[] columnWidths;
+	bool scripted;
+	bool literal;
+	bool first;
+	ZfsPropertyList* propertyList;
+	ZfsType type;
+}
+
+/*
+ * Functions for printing zfs or zpool properties
+ */
+typedef struct zprop_get_cbdata {
+	int cb_sources;
+	zfs_get_column_t cb_columns[ZFS_GET_NCOLS];
+	int cb_colwidths[ZFS_GET_NCOLS + 1];
+	boolean_t cb_scripted;
+	boolean_t cb_literal;
+	boolean_t cb_first;
+	zprop_list_t *cb_proplist;
+	zfs_type_t cb_type;
+} zprop_get_cbdata_t;
+
+void zprop_print_one_property(const char *, zprop_get_cbdata_t *, const char *, const char *, zprop_source_t, const char *, const char *);
+
+
+@SILdoc(`create dataset`)
+void createDataset(string name, DatasetType type, nvlist_t* props = null)
+{
+	import std.format: format;
+	auto result = zfs_create(zfsHandle, name.toCString, type.to!zfs_type_t, props);
+	enforce(result ==0, format!"unable to create dataset %s: %s"(name, result));
+}
+
+void createAncestors(string name)
+{
+	import std.format: format;
+	auto result = zfs_create_ancestors(zfsHandle, name.toCString);
+	enforce(result ==0, format!"unable to create ancestors for %s: %s"(name, result));
+}
+
+void destroy(DatasetList dataset, bool defer)
+{
+	auto result = zfs_destroy(dataset.handle.zh, defer ? 1 : 0);
+	enforce(result == 0);
+}
+
+DatasetList listChildren(DatasetList dataset)
+{
+	DatasetList ret = DatasetList.create();
+	int err = zfs_iter_children(dataset.handle.zh,datasetListCallback,&ret.handle);
+	if (err !=0 || ret.handle.zh is null)
+	{
+		dataset_list_free(ret.handle);
+		return DatasetList(null);
+	}
+	return ret;
+}
+
+ZpoolList getPool(DatasetList dataset)
+{
+	ZpoolList pool = ZpoolList.create();
+	if (pool.handle !is null)
+	{
+		pool.handle.zph = zfs_get_pool_handle(dataset.handle.zh);
+	}
+	return pool;
+}
+
+void setProperty(DatasetList dataset, ZfsPropertyType property, string value)
+{
+	auto result = zfs_prop_set(dataset.handle.zh,zfs_prop_to_name(property.to!zfs_prop_t),value.toCString);
+	enforce(result ==0);
+}
+
+void setProperty(DatasetList dataset, string property, string value)
+{
+	auto result = zfs_prop_set(dataset.handle.zh,property.toCString,value.toCString);
+	enforce(result ==0);
+}
+
+
+	
+void destroySnaps(ZfsHandle handle, 
+extern int zfs_destroy_snaps(zfs_handle_t *, char *, boolean_t);
+extern int zfs_destroy_snaps_nvl(libzfs_handle_t *, nvlist_t *, boolean_t);
+
+void clone(ZfsHandle handle, string name, nvlist_t* props)
+{
+	auto result = zfs_clone(handle.handle,name.toCString,props);
+	enforce(result == 0);
+}
+
+void snapshot(string name, bool arg, nvlist_t* props)
+{
+	auto result = zfs_snapshot(zfsHandle,name.toCString, arg ? 1 : 0, props);
+	enforce(result == 0);
+}
+
+void snapshot(nvlist_t* snaps, nvlist_t* props)
+{
+	auto result = zfs_snapshot_nvl(zfsHandle,snaps,props);
+	enforce(result == 0);
+}
+
+void rollback(zfs_handle_t* handle, bool arg)
+{
+	auto result = zfs_rollback(zfsHandle,handle,arg ? 1 : 0);
+	enforce(result == 0);
+}
+
+extern int zfs_rename(zfs_handle_t *, const char *, boolean_t, boolean_t);
+
+struct SendFlag
+{
+	verbose,					// print informational messages (-v)
+	recursiveSend,				// replicate (-R)
+	doAllIntermediateSnaps,		// for incrementals, do all intermediate snapshots
+	fromOrigin,					// for clone dataset, do incremental from origin
+	deduplicate, 				// do deduplication
+	sendProperties,				// send properties (-p)
+	dryRun,						// do not send (no-op ie -n)
+	parsable,					// parsable verbose output (-P)
+	progress,					// show progress (-v)
+	largeBlocksPermitted,		// large blocks (> 128K) permitted
+	embedData,					// WRITE_EMBEDDED records of type DATA are permitted
+	compress,					// compressed WRITE records are permitted
+	raw,						// raw encypted records are permitted
+	onlySendReceivedProperties,	//	only send received properties (-b)
+	includeSnapshotHolds,		//	include snapshot holds in send stream
+}
+
+sendflags_t asSendFlags(SendFlag[] flags)
+{
+	sendflags_t ret;
+	foreach(flag;flags)
+	{
+		final switch(flag) with(SendFlag)
+		{
+			case verbose:
+				ret.verbose = 1;
+				break;
+			case recursiveSend:
+				ret.recursive = 1;
+				break;
+			case doAllIntermediateSnaps:
+				ret.doall = 1;
+				break;
+			case fromOrigin:
+				ret.fromorigin = 1;
+				break;
+			case deduplicate:
+				ret.dedup = 1;
+				break;
+			case sendProperties:
+				ret.props = 1;
+				break;
+			case dryRun:
+				ret.dryrun = 1;
+				break;
+			case parsable:
+				ret.parsable = 1;
+				break;
+			case progress:
+				ret.progress = 1;
+				break;
+			case largeBlocksPermitted:
+				ret.largeblock = 1;
+				break;
+			case embedData:
+				ret.embed_data = 1;
+				break;
+			case compress:
+				ret.compress = 1;
+				break;
+			case raw:
+				ret.raw = 1;
+				break;
+			case onlySendReceivedProperties:
+				ret.backup = 1;
+				break;
+			case includeSnapshotHolds:
+				ret.holds = 1;
+				break;
+		}
+	}
+	return ret;
+}
+
+
+typedef boolean_t (snapfilter_cb_t)(zfs_handle_t *, void *);
+
+extern int zfs_send(zfs_handle_t *, const char *, const char *, sendflags_t *, int, snapfilter_cb_t, void *, nvlist_t **);
+
+void sendOne(ZfsHandle handle, string name, int arg, SendFlag[] flags)
+{
+	auto cflags = flags.asSendFlags;
+	auto result = zfs_send_one(handle.handle,name.toCString, arg,cflags);
+	enforce(result == 0);
+}
+
+void sendResume(ZfsHandle handle, SendFlag[] flags, int outFD, string name)
+{
+	auto cflags = flags.asSendFlags;
+	auto result = zfs_send_resume(handle.handle,cflags,outFD,name.toCString);
+	enforce(result == 0);
+}
+
+nvlist_t* sendResumeTokenToNvlist(ZfsHandle handle, string token)
+{
+	auto ret = zfs_send_resume_token_to_nvlist(handle.handle,token.toCString);
+	enforce(ret !is null);
+	return ret;
+}
+
+void promote(ZfsHandle handle)
+{
+	auto result = zfs_promote(handle.handle);
+	enforce(result == 0);
+}
+
+void hold(ZfsHandle handle, string arg1, string arg2, bool arg3, int arg4)
+{
+	auto result = zfs_hold(handle.handle,arg1,arg2,arg2 ? 1 : 0, arg4);
+	enforce(result == 0);
+}
+
+extern int zfs_hold_nvl(zfs_handle_t *, int, nvlist_t *);
+extern int zfs_release(zfs_handle_t *, const char *, const char *, boolean_t);
+extern int zfs_get_holds(zfs_handle_t *, nvlist_t **);
+extern ulong zvol_volsize_to_reservation(ulong, nvlist_t *);
+
+typedef int (*zfs_userspace_cb_t)(void *arg, const char *domain,
+    uid_t rid, ulong space);
+
+extern int zfs_userspace(zfs_handle_t *, zfs_userquota_prop_t, zfs_userspace_cb_t, void *);
+extern int zfs_get_fsacl(zfs_handle_t *, nvlist_t **);
+extern int zfs_set_fsacl(zfs_handle_t *, boolean_t, nvlist_t *);
+
+enum ReceiveFlag
+{
+	verbose,				// print informational messages (ie, -v was specified)
+	isPrefix,				// the destination is a prefix, not the exact fs (ie, -d)
+	isTail,					// only the tail of the sent snapshot path is appended to the destination to determine the received snapshot name (ie, -e)
+	dryRun, 				// do not actually do the recv, just check if it would work (ie, -n)
+	force, 					// rollback/destroy filesystems as necessary (eg, -F)
+	canMountOff, 			// set "canmount=off" on all modified filesystems
+	resumable,				// mark the file systems as "resumable" and do not destroy them if the  receive is interrupted
+	nomount,				// do not mount file systems as they are extracted (private)
+	holds, 					// was holds flag set in the compound header?
+	skipHolds,				// skip receive of snapshot holds
+}
+
+recvflags_t asReceiveFlags(ReceiveFlag[] flags)
+{
+	recvflags_t ret;
+	foreach(flag;flags)
+	{
+		final switch(flag) with(ReceiveFlag)
+		{
+			case verbose:
+				ret.verbose = 1;
+				break;
+			case isPrefix:
+				ret.isprefix = 1;
+				break;
+			case isTail:
+				ret.istail = 1;
+				break;
+			case dryRun:
+				ret.dryrun = 1;
+				break;
+			case canMountOff:
+				ret.canMountOff = 1;
+				break;
+			case resumable:
+				ret.resumable = 1;
+				break;
+			case nomount:
+				ret.nomount = 1;
+				break;
+			case holds:
+				ret.holds = 1;
+				break;
+			case skipHolds:
+				ret.skipholds = 1;
+				break;
+		}
+	}
+	return ret;
+}
+
+void receive(LibZfsHandle handle, string arg, nvlist_t* props, ReceiveFlag[] flags, int arg2, avl_tree_t* tree)
+{
+	auto cflags = flags.asReceiveFlags;
+	auto result = zfs_receive(handle.handle, arg.toCString, props, &cflags, arg2, tree);
+	enforce(result == 0);
+}
+
+// diff_flags_t
+enum ZfsDiffFlag
+{
+	parseable = ZFS_DIFF_PARSEABLE,
+	timestamp = ZFS_DIFF_TIMESTAMP,
+	classify = ZFS_DIFF_CLASSIFY,
+}
+
+void showDiffs(ZfsHandle handle, int arg1, string name, string value, int arg2)
+{
+	auto result = zfs_show_diffs(handle.handle,arg1,name.toCString,value.toCstring,arg2);
+	enforce(result == 0);
+}
+
+/*
+ * Miscellaneous functions.
+ */
+extern const char *zfs_type_to_name(zfs_type_t);
+extern void zfs_refresh_properties(zfs_handle_t *);
+extern int zfs_name_valid(const char *, zfs_type_t);
+extern zfs_handle_t *zfs_path_to_zhandle(libzfs_handle_t *, char *, zfs_type_t);
+extern int zfs_parent_name(zfs_handle_t *, char *, size_t);
+extern boolean_t zfs_dataset_exists(libzfs_handle_t *, const char *,
+    zfs_type_t);
+extern int zfs_spa_version(zfs_handle_t *, int *);
+extern boolean_t zfs_bookmark_exists(const char *path);
+
+/*
+ * Mount support functions.
+ */
+extern boolean_t is_mounted(libzfs_handle_t *, const char *special, char **);
+extern boolean_t zfs_is_mounted(zfs_handle_t *, char **);
+extern int zfs_mount(zfs_handle_t *, const char *, int);
+extern int zfs_unmount(zfs_handle_t *, const char *, int);
+extern int zfs_unmountall(zfs_handle_t *, int);
+
+/*
+ * Share support functions.
+ */
+extern boolean_t zfs_is_shared(zfs_handle_t *);
+extern int zfs_share(zfs_handle_t *);
+extern int zfs_unshare(zfs_handle_t *);
+
+/*
+ * Protocol-specific share support functions.
+ */
+extern boolean_t zfs_is_shared_nfs(zfs_handle_t *, char **);
+extern boolean_t zfs_is_shared_smb(zfs_handle_t *, char **);
+extern int zfs_share_nfs(zfs_handle_t *);
+extern int zfs_share_smb(zfs_handle_t *);
+extern int zfs_shareall(zfs_handle_t *);
+extern int zfs_unshare_nfs(zfs_handle_t *, const char *);
+extern int zfs_unshare_smb(zfs_handle_t *, const char *);
+extern int zfs_unshareall_nfs(zfs_handle_t *);
+extern int zfs_unshareall_smb(zfs_handle_t *);
+extern int zfs_unshareall_bypath(zfs_handle_t *, const char *);
+extern int zfs_unshareall_bytype(zfs_handle_t *, const char *, const char *);
+extern int zfs_unshareall(zfs_handle_t *);
+extern int zfs_deleg_share_nfs(libzfs_handle_t *, char *, char *, char *,
+    void *, void *, int, zfs_share_op_t);
+
+extern int zfs_nicestrtonum(libzfs_handle_t *, const char *, ulong *);
+
+/*
+ * Utility functions to run an external process.
+ */
+#define	STDOUT_VERBOSE	0x01
+#define	STDERR_VERBOSE	0x02
+#define	NO_DEFAULT_PATH	0x04 /* Don't use $PATH to lookup the command */
+
+int libzfs_run_process(const char *, char **, int flags);
+int libzfs_run_process_get_stdout(const char *path, char *argv[], char *env[],
+    char **lines[], int *lines_cnt);
+int libzfs_run_process_get_stdout_nopath(const char *path, char *argv[],
+    char *env[], char **lines[], int *lines_cnt);
+
+void libzfs_free_str_array(char **strs, int count);
+
+int libzfs_envvar_is_set(char *envvar);
+
+@SILdoc(`print ZFS version`)
+void printVersion()
+{
+	import std.format: format;
+	auto result = zfs_version_print();
+	enforce(result == 0, format!"error printing version: %s"(result));
+}
+
+@SILdoc(`get ZFS version userland`)
+string versionUserland()
+{
+	char[16384] buf;
+	zfs_version_userland(buf.ptr,buf.length.to!int);
+	return buf.fromCString;
+}
+@SILdoc(`get ZFS version kernel`)
+string versionKernel()
+{
+	char[16384] buf;
+	zfs_version_kernel(buf.ptr,buf.length.to!int);
+	return buf.fromCString;
+}
+
+/*
+ * Given a device or file, determine if it is part of a pool.
+ */
+extern int zpool_in_use(libzfs_handle_t *, int, pool_state_t *, char **, boolean_t *);
+
+/*
+ * Label manipulation.
+ */
+extern int zpool_clear_label(int);
+
+// Management interfaces for SMB ACL files
+/+
+int zfs_smb_acl_add(libzfs_handle_t *, char *, char *, char *);
+int zfs_smb_acl_remove(libzfs_handle_t *, char *, char *, char *);
+int zfs_smb_acl_purge(libzfs_handle_t *, char *, char *);
+int zfs_smb_acl_rename(libzfs_handle_t *, char *, char *, char *, char *);
++/
+
+@SILdoc(`Enable datasets within a pool by mounting and sharing them`)
+void enableDatasets(string dataset, int value)
+{
+	import std.format: format;
+	auto result = zpool_enable_datasets(this.handle,dataset.toStringz,value);
+	enforce(result == 0, format!"error enabling dataset: %s"(result));
+}
+
+@SILdoc(`disable datasets within a pool by unmounting and unsharing them.`)
+void disableDatasets(bool value)
+{
+	import std.format: format;
+	auto result = zpool_disable_datasets(this.handle,value ? 1 : 0);
+	enforce(result == 0, format!"error disabling dataset: %s"(result));
+}
+
+@SILdoc(`remap indirects`)
+void remapIndirects(string value)
+{
+	import std.format: format;
+	auto result = zfs_remap_indirects(zfsHandle,value.toCString);
+	enforce(result == 0, format!"error remapping indirects: %s"(result));
+}
+
+nvlist_t* getProperties(string[string] properties)
+{
+	nvlist_t* ret = nvlistAlloc(NV_UNIQUE_NAME,0);
+	foreach(entry;properties.byKeyValue)
+	{
+		enforce(nvlist_add_string(ret,entry.key.toCString,entry.value.toCstring)==0, "allocating properties");
+	}
+	return ret;
+}
+
+nvlist_t* getList(string[] values)
+{
+	nvlist_t* ret = nvlistAlloc(NV_UNIQUE_NAME,0);
+	foreach(entry;values);
+	{
+		nvlistAddBoolean(ret,value);
+	}
+	return ret;
+}
+
+
+@SILdoc(`Retrieve a property from the given object.  If 'literal' is specified, then numbers are left as exact values.  Otherwise, numbers are converted to a human-readable form.`)
+string propertyGet(zfs_handle_t *zhp, zfs_prop_t prop, zprop_source_t *src, char *statbuf, size_t statlen, bool literalNotFriendly)
+{
+    import std.format:format;
+    char[4096] propBuf;
+    auto result = zfs_prop_get(zhp, prop, propBuf.ptr, probBuf.sizeof, src, statbuf, statlen, literalNotFriendly ? 1 : 0);
+}
+
