@@ -1,0 +1,1718 @@
+
+#include <assert.h>
+#include <libnvpair.h>
+#include <sys/mnttab.h>
+#include <sys/param.h>
+#include <sys/types.h>
+#include <sys/varargs.h>
+#include <sys/fs/zfs.h>
+#include <sys/avl.h>
+#include <ucred.h>
+#include <libzfs_core.h>
+
+#define	ZFS_MAXPROPLEN		MAXPATHLEN
+#define	ZPOOL_MAXPROPLEN	MAXPATHLEN
+
+// zfs_error_t
+enum ZfsError
+{
+	success = 					EZFS_SUCCESS,			// no error -- success
+	outOfMemory = 				EZFS_NOMEM 				// out of memory
+	invalidPropertyValue = 		EZFS_BADPROP,			// invalid property value
+	cannotSetReadOnlyProperty = EZFS_PROPREADONLY,		// cannot set readonly property
+	EZFS_PROPTYPE,		/* property does not apply to dataset type */
+	EZFS_PROPNONINHERIT,	/* property is not inheritable */
+	EZFS_PROPSPACE,		/* bad quota or reservation */
+	EZFS_BADTYPE,		/* dataset is not of appropriate type */
+	EZFS_BUSY,		/* pool or dataset is busy */
+	EZFS_EXISTS,		/* pool or dataset already exists */
+	EZFS_NOENT,		/* no such pool or dataset */
+	EZFS_BADSTREAM,		/* bad backup stream */
+	EZFS_DSREADONLY,	/* dataset is readonly */
+	EZFS_VOLTOOBIG,		/* volume is too large for 32-bit system */
+	EZFS_INVALIDNAME,	/* invalid dataset name */
+	EZFS_BADRESTORE,	/* unable to restore to destination */
+	EZFS_BADBACKUP,		/* backup failed */
+	EZFS_BADTARGET,		/* bad attach/detach/replace target */
+	EZFS_NODEVICE,		/* no such device in pool */
+	EZFS_BADDEV,		/* invalid device to add */
+	EZFS_NOREPLICAS,	/* no valid replicas */
+	EZFS_RESILVERING,	/* currently resilvering */
+	EZFS_BADVERSION,	/* unsupported version */
+	EZFS_POOLUNAVAIL,	/* pool is currently unavailable */
+	EZFS_DEVOVERFLOW,	/* too many devices in one vdev */
+	EZFS_BADPATH,		/* must be an absolute path */
+	EZFS_CROSSTARGET,	/* rename or clone across pool or dataset */
+	EZFS_ZONED,		/* used improperly in local zone */
+	EZFS_MOUNTFAILED,	/* failed to mount dataset */
+	EZFS_UMOUNTFAILED,	/* failed to unmount dataset */
+	EZFS_UNSHARENFSFAILED,	/* unshare(1M) failed */
+	EZFS_SHARENFSFAILED,	/* share(1M) failed */
+	permissionDenied = 			EZFS_PERM,				//  permission denied
+	outOfSpace = 				EZFS_NOSPC,				// out of space
+	badAddress = 				EZFS_FAULT,				// bad address
+	ioError = 					EZFS_IO,				// I/O error
+	signalReceived = 			EZFS_INTR,				// signal received
+	isHotSpare = 				EZFS_ISSPARE,			// device is a hot spare
+	invalidVdevConfig = 		EZFS_INVALCONFIG,		// invalid vdev configuration
+	recursiveDependency =		EZFS_RECURSIVE,			// recursive dependency
+	noHistoryObject = 			EZFS_NOHISTORY,			// no history object
+	couldntRetrievePoolProps = 	EZFS_POOLPROPS,			// couldn't retrieve pool props
+	poolNotSupported = 			EZFS_POOL_NOTSUP,		// ops not supported for this type of pool
+	poolInvalidArgument = 		EZFS_POOL_INVALARG,		// invalid argument for this pool operation
+	datasetNameTooLong = 		EZFS_NAMETOOLONG,		// dataset name is too long
+	openDeviceFailed = 			EZFS_OPENFAILED,		// open of device failed
+	noCapacity = 				EZFS_NOCAP,				// couldn't get capacity
+	writeLabelFailed = 			EZFS_LABELFAILED,		// write of label failed
+	invalidPermissionWho = 		EZFS_BADWHO,			// invalid permission who
+	invalidPermission = 		EZFS_BADPERM,			// invalid permission
+	badPermissionSetName = 		EZFS_BADPERMSET,		// invalid permission set name
+	disabledDelegatedAdmin = 	EZFS_NODELEGATION,		// delegated administration is disabled
+	failedSMBUnshare = 			EZFS_UNSHARESMBFAILED,	// failed to unshare over smb
+	failedSMBShare = 			EZFS_SHARESMBFAILED,	// failed to share over smb
+	badCacheFile = 				EZFS_BADCACHE,			// bad cache file
+	isLevel2ARC = 				EZFS_ISL2CACHE,			// device is for the level 2 ARC
+	unsupportedVdevType =		EZFS_VDEVNOTSUP,		// unsupported vdev type
+	operationNotSupported = 	EZFS_NOTSUP,			// ops not supported on this dataset
+	activeSpare = 				EZFS_ACTIVE_SPARE,		// pool has active shared spare devices
+	unplayedLogs = 				EZFS_UNPLAYED_LOGS,		// log device has unplayed logs
+	snapshotRelTagNotFound = 	EZFS_REFTAG_RELE,		// snapshot release: tag not found
+	snapshotHoldTagExists = 	EZFS_REFTAG_HOLD,		// snapshot hold: tag already exists
+	tagTooLong = 				EZFS_TAGTOOLONG,		// snapshot hold/rele: tag too long
+	pipeCreateFailed = 			EZFS_PIPEFAILED,		// pipe create failed
+	threadCreateFailed = 		EZFS_THREADCREATEFAILED, //   thread create failed
+	onlinePostSplit = 			EZFS_POSTSPLIT_ONLINE,	// onlining a disk after splitting it
+	currentlyScrubbing = 		EZFS_SCRUBBING,			// currently scrubbing
+	noActiveScrub = 			EZFS_NO_SCRUB,			// no active scrub
+	generalFailureZFSDiff = 	EZFS_DIFF,				// general failure of zfs diff
+	badZFSDiffData = 			EZFS_DIFFDATA,			// bad zfs diff data
+	poolReadOnlyMode =			EZFS_POOLREADONLY,		// pool is in read-only mode
+	scrubCurrentlyPaused = 		EZFS_SCRUB_PAUSED,		// scrub currently paused
+	poolActiveOtherSystem = 	EZFS_ACTIVE_POOL,		// pool is imported on a different system
+	cryptoFailed = 				EZFS_CRYPTOFAILED,		// failed to setup encryption
+	noOperationPending = 		EZFS_NO_PENDING,		// cannot cancel, no operation is pending
+	checkpointExists = 			EZFS_CHECKPOINT_EXISTS,	// checkpoint exists
+	discardingCheckpoint = 		EZFS_DISCARDING_CHECKPOINT,	// currently discarding a checkpoint
+	noCheckpoint = 				EZFS_NO_CHECKPOINT,		// pool has no checkpoint
+	deviceRemovalInProgress = 	EZFS_DEVRM_IN_PROGRESS,	// a device is currently being removed
+	vdevTooBig = 				EZFS_VDEV_TOO_BIG,		// a device is too big to be used
+	operationNotSupportedZfs = 	EZFS_IOC_NOTSUPPORTED,	// operation not supported by zfs module
+	tooManyArguments = 			EZFS_TOOMANY,			// argument list too long
+	initializing, 				EZFS_INITIALIZING,		// currently initializing
+	noActiveInitialize, 		EZFS_NO_INITIALIZE,		// no active initialize
+	invalidParentDataset,		EZFS_WRONG_PARENT,		// invalid parent dataset (e.g ZVOL)
+	currentlyTrimming = 		EZFS_TRIMMING,			// currently trimming
+	noActiveTrim = 				EZFS_NO_TRIM,			// no active trim
+	trimNotSupported = 			EZFS_TRIM_NOTSUP,		// device does not support trim
+	noResilverDeferSupported = 	EZFS_NO_RESILVER_DEFER,	// pool doesn't support resilver_defer
+	unknown
+}
+
+enum ZfsPropertySource
+{
+	none = ZPROP_SRC_NONE,
+	temporary = ZPROP_SRC_TEMPORARY,
+	local = ZPROP_SRC_LOCAL,
+	inherited = ZPROP_SRC_INHERITED,
+	received = ZPROP_SRC_RECEIVED,
+}
+
+/*
+ * The following data structures are all part
+ * of the zfs_allow_t data structure which is
+ * used for printing 'allow' permissions.
+ * It is a linked list of zfs_allow_t's which
+ * then contain avl tree's for user/group/sets/...
+ * and each one of the entries in those trees have
+ * avl tree's for the permissions they belong to and
+ * whether they are local,descendent or local+descendent
+ * permissions.  The AVL trees are used primarily for
+ * sorting purposes, but also so that we can quickly find
+ * a given user and or permission.
+ */
+typedef struct zfs_perm_node {
+	avl_node_t z_node;
+	char z_pname[MAXPATHLEN];
+} zfs_perm_node_t;
+
+typedef struct zfs_allow_node {
+	avl_node_t z_node;
+	char z_key[MAXPATHLEN];		/* name, such as joe */
+	avl_tree_t z_localdescend;	/* local+descendent perms */
+	avl_tree_t z_local;		/* local permissions */
+	avl_tree_t z_descend;		/* descendent permissions */
+} zfs_allow_node_t;
+
+typedef struct zfs_allow {
+	struct zfs_allow *z_next;
+	char z_setpoint[MAXPATHLEN];
+	avl_tree_t z_sets;
+	avl_tree_t z_crperms;
+	avl_tree_t z_user;
+	avl_tree_t z_group;
+	avl_tree_t z_everyone;
+} zfs_allow_t;
+
+/*
+ * Basic handle types
+ */
+
+struct Zfs
+{
+	zfs_handle_t* handle;
+
+	LibZfs getHandle()
+	{
+		enforce(this.handle !is null, "no dataset");
+		return LibZfs(zfs_get_handle(this.handle);
+	}
+}
+
+struct Zpool
+{
+	zpool_handle handle;
+}
+
+struct LibZfs
+{
+	libzfs_handle* handle;
+}
+
+
+__gshared libzfs_handle_t* libZfsHandle;
+
+shared static this()
+{
+	libZfsHandle = libzfs_init();
+}
+
+shared static ~this()
+{
+	libzfs_fini(libZfsHandle);
+}
+
+extern void libzfs_print_on_error(libzfs_handle_t *, boolean_t);
+
+extern void zfs_save_arguments(int argc, char **, char *, int);
+extern int zpool_log_history(libzfs_handle_t *, const char *);
+
+int lastError()
+{
+	return libzfs_errno(libZfsHandle);
+}
+
+string lastErrorString()
+{
+	return libzfs_error_description(libZfsHandle).fromCString.idup;
+}
+
+void clearLastError()
+{
+	zfs_standard_error(libZfsHandle,EZFS_SUCCESS,"success");
+}
+
+
+string zfsErrorAction()
+{
+	return libzfs_error_action(zfsHandle).fromCString.idup;
+}
+
+string zfsErrorDescription()
+{
+	return libzfs_error_description(zfsHandle).fromCString.idup;
+}
+
+string zfsErrorInit(int val)
+{
+	return libzfs_error_init(val).fromCString.idup;
+}
+
+property_list_t* newPropertyList()
+{
+	return calloc(property_list_t.sizeof,1);
+}
+
+void freeProperties(property_list_t *root)
+{
+	if (root !is null)
+	{
+		property_list_t* tmp = null;
+		do
+		{
+			tmp = root.pnext;
+			free(root);
+			root = tmp;
+		} while(tmp);
+	}
+}
+
+nvlist_t newPropertyNvlist()
+{
+	nvlist_t* props = null;
+	int r = nvlist_alloc(&props, NV_UNIQUE_NAME, 0);
+	return ( r != 0 ) ? null : props;
+}
+
+
+int property_nvlist_add(nvlist_t* list, string property, string value)
+{
+	return nvlist_add_string(list, property.toCString, value.toCString);
+}
+
+extern int zfs_standard_error(libzfs_handle_t *, int, const char *);
+extern void libzfs_mnttab_init(libzfs_handle_t *);
+extern void libzfs_mnttab_fini(libzfs_handle_t *);
+extern void libzfs_mnttab_cache(libzfs_handle_t *, boolean_t);
+extern int libzfs_mnttab_find(libzfs_handle_t *, const char *, struct mnttab *);
+extern void libzfs_mnttab_add(libzfs_handle_t *, const char *, const char *, const char *);
+extern void libzfs_mnttab_remove(libzfs_handle_t *, const char *);
+
+
+extern(C) int datasetListCallback(zfs_handle_t* dataset, void* data)
+{
+	dataset_list_t** lroot = cast(dataset_list_t**) data;
+	dataset_list_t* nroot = calloc(dataset_list_t.sizeof,1);
+	if ((*lroot).zh) !is null)
+	{
+		(*lroot).zh = dataset;
+	}
+	else
+	{
+		nroot.zh = dataset;
+		nroot.pnext = cast(void*) *lroot;
+		*lroot = nroot;
+	}
+	return 0;
+}
+
+struct DatasetList
+{
+	dataset_list_t* handle;
+
+	static DatasetList create()
+	{
+		DataSetList ret;
+		ret.handle = calloc(dataset_list_t.sizeof,1);
+		return ret;
+	}
+
+	void close()
+	{
+		if (handle !is null)
+		{
+			if (handle.zh !is null)
+			{
+				zfs_close(handle.zh);
+				handle.zh = null;
+			}
+			free(handle);
+		}
+	}
+
+	void free()
+	{
+		DatasetList next;
+		while(this.handle)
+		{
+			next = DatasetList(handle.pnext);
+			free(this.handle);
+			this.handle = next.handle;
+		}
+	}
+
+	static listRoot()
+	{
+		int err = 0;
+		auto ret = DatasetList.create();
+		int err = zfs_iter_root(libZfsHandle,datasetListCallback,&ret.handle);
+		if (err !=0 || ret.handle.zh is null)
+		{
+			ret.free();
+			return DatasetList(null);
+		}
+		return ret;
+	}
+
+	void popFront()
+	{
+		enforce (this.handle !is null);
+		this.handle = this.handle.pnext;
+	}
+
+	bool empty()
+	{
+		return(this.handle is null);
+	}
+
+	dataset_list_t* front()
+	{
+		return this.handle;
+	}
+
+	int type()
+	{
+		return zfs_get_type(handle.zh);
+	}
+
+	static DatasetList open(string path)
+	{
+		DatasetList list = DatasetList.create();
+		list.handle.zh = zfs_open(libZfsHandle,path.toCString,0xF);
+		if (list.handle.zh is null)
+		{
+			dataset_list_free(list.handle);
+			list.handle = null;
+		}
+		return list;
+	}
+}
+
+struct Dataset
+{
+	static void create(string path, Zfs
+	}
+
+
+ZpoolList* create_zpool_list_item()
+{
+	return calloc(1UL,ZpoolList.sizeof);
+}
+
+extern(C) int zpoolListCallback(zpool_handle_t* pool, void* data)
+{
+	ZpoolList **lroot = cast(ZpoolList**)data;
+	ZpoolList* nroot = create_zpool_list_item();
+
+	if ( ((*lroot).zph) is null)
+	{
+		(*lroot).zph = pool;
+	} else
+	{
+		nroot.zph = pool;
+		nroot.pnext = cast(void*)*lroot;
+		*lroot = nroot;
+	}
+	return 0;
+}	
+
+struct ZpoolList
+{
+	zpool_handle_t* zph;
+	void* pnext;
+
+	static ZpoolList create()
+	{
+		ZpoolList ret;
+		ret.handle = create_zpool_list_item();
+		return ret;
+	}
+
+	static ZpoolList openAll()
+	{
+		int err = 0;
+		ZpoolList zlist = ZpoolList.createItem();
+		err = zpool_iter(zfsHandle, zpool_list_callb,&zlist.handle);
+		if (err !=0 || zlist.handle.zph is null)
+		{
+			zpool_list_free(zlist.handle);
+			zlist.handle = null;
+		}
+		return zlist;
+	}
+
+	static ZpoolList open(string name)
+	{
+		ZpoolList zlist = ZpoolList.createItem();
+		zlist.handle.zph = zpool_open(zfsHandle,name.toCstring);
+		if (zlist.handle.zph !is null)
+		{
+			return zlist;
+		}
+		else
+		{
+			zpool_list_free(zlist.handle);
+			zlist.handle = null;
+		}
+		return zlist;
+	}
+
+	void popFront()
+	{
+		enforce(!empty && this.handle.pnext !is null);
+		this.handle = this.handle.pnext;
+	}
+
+	bool empty()
+	{
+		enforce(this.handle is null);
+	}
+
+	ZpoolList front()
+	{
+		return this;
+	}
+
+	void dispose()
+	{
+		ZpoolList next;
+		while(this.handle)
+		{
+			next = this.handle.pnext;
+			free(this.handle);
+			this.handle = next;
+		}
+	}
+
+	void close()
+	{
+		zpool_close(this.handle.zph);
+		zpool_list_free(this.handle);
+	}
+}	
+struct Zpool
+{
+	zpool_handle_t* handle;
+
+	LibZfs getHandle()
+	{
+		enforce(this.handle !is null, "no pool");
+		return LibZfs(zpool_get_handle(this.handle);
+	}
+
+	static void open(string name)
+	{
+		Zpool ret;
+		ret.handle = zpool_open(zfsHandle,name.toCString);
+		return ret;
+	}
+
+	static void openCanFail(string name)
+	{
+		Zpool ret;
+		ret.handle = zpool_open_canfail(zfsHandle,name.toCString);
+		return ret;
+	}
+
+	void close()
+	{
+		enforce(this.handle !is null, "no pool");
+		zpool_close(this.handle);
+		this.handle = null;
+	}
+
+	string name()
+	{
+		enforce(this.handle !is null, "no pool");
+		return zpool_get_name(this.handle).fromCString;
+	}
+
+	int getState()
+	{
+		enforce(this.handle !is null, "no pool");
+		return zpool_get_state(this.handle);
+	}
+	string vdevName(nvlist_t* list, int nameFlags)
+	{
+		auto ret = zpool_vdev_name(zfsHandle,this.handle,list,nameFlags);
+		enforce(ret !is null);
+		return ret.fromCString);
+	}
+
+	void upgrade(ulong arg)
+	{
+		auto result = zpool_upgrade(this.handle,arg);
+		enforce(result==0);
+	}
+
+	nvlist_t* getHistory()
+	{
+		nvlist_t* ret;
+		auto result = zpool_get_history(this.handle,&ret);
+		enforce(result==0);
+		return ret;
+	}
+
+	string getPhysPath()
+	{
+		char[32768] buf;
+		auto result = zpool_get_physpath(this.handle, buf.ptr, buf.length);
+		enforce(result==0);
+		return buf.ptr.fromCString;
+	}
+
+	void checkpoint()
+	{
+		auto result = zpool_checkpoint(this.handle);
+		enforce(result==0);
+	}
+	
+	void discardCheckpoint()
+	{
+		auto result = zpool_discard_checkpoint(this.handle);
+		enforce(result==0);
+	}
+
+	static void createPool(string name, nvlist_t* args1, nvlist_t* args2, nvlist_t* args3)
+	{
+		auto result = zpool_create(zfsHandle, name.toCString, args1,args2,args3);
+		enforce(result==0);
+	}
+
+	void destroyPool(string name)
+	{
+		auto result = zpool_destroy(this.handle, name.toCString);
+		enforce(result==0);
+	}
+
+	void addPool(nvlist_t* args)
+	{
+		auto result = zpool_add(this.handle,args);
+		enforce(result == 0);
+	}
+
+	void scan(pool_scan_func_t scanFunction, pool_scrub_cmd_t scrubFunction)
+	{
+		auto result = zpool_scan(this.handle, scanFunction, scrubFunction);
+		enforce(result == 0);
+	}
+
+	void initialize(pool_initialize_func_t initFunction, nvlist_t* args)
+	{
+		auto result= zpool_initialize(this.handle,initFunction,args);
+		enforce(result == 0);
+	}
+
+	void trim(pool_trim_func_t trimFunction, nvlist_t* args, bool fullPool, bool requestSecure, ulong rate)
+	{
+		trimflags_t trimFlags = {fullpool: fullPool ? 1 : 0, secure: requestSecure ? 1 : 0, rate: rate};
+		auto result = zpool_trim(this.handle, trimFunction, args, trimFlags);
+		enforce(result == 0);
+	}
+
+	void clear(string value, nvlist_t* args)
+	{
+		auto result = zpool_clear(this.handle, value.toCString, args);
+		enforce(result == 0);
+	}
+
+	void reguid()
+	{
+		auto result = zpool_reguid(this.handle);
+		enforce(result == 0);
+	}
+
+	void reopenOne(void* arg)
+	{
+		auto result =  zpool_reopen_one(this.handle,arg);
+		enforce(result == 0);
+	}
+
+	void syncOne(void* arg)
+	{
+		auto result = zpool_sync_one(this.handle,arg);
+		enforce(result == 0);
+	}
+
+	void online(string arg1, int arg2, vdev_state_t* vdevState)
+	{
+		auto result = zpool_vdev_online(this.handle,arg1.toCString, arg2, vdevState);
+		enforce(result == 0);
+	}
+
+	void offline(string arg1, bool arg2)
+	{
+		auto result = zpool_vdev_offline(this.handle,arg1.toCString, arg2 ? 1 : 0);
+		enforce(result == 0);
+	}
+
+	void attach(string arg1, string arg2, nvlist_t* list, int arg3)
+	{
+		auto result = zpool_vdev_attach(this.handle,arg1,arg2,list,arg3);
+		enforce(result == 0);
+	}
+
+	void detach(string arg)
+	{
+		auto result = zpool_vdev_detach(this.handle,arg);
+		enforce(result == 0);
+	}
+
+	void remove(string arg)
+	{
+		auto result = zpool_vdev_remove(this.handle,arg.toCString);
+		enforce(result == 0);
+	}
+
+	void removeCancel()
+	{
+		auto result = zpool_vdev_remove_cancel(this.handle);
+		enforce(result == 0);
+	}
+
+	ulong vdevIndirectSize(string arg1)
+	{
+		ulong ret;
+		auto result = zpool_vdev_indirect_size(this.handle, arg1.toCString, &ret);
+		enforce(result == 0);
+		return ret;
+	}
+
+	void vdevSplit(string arg1, nvlist_t** arg2, nvlist_t* arg3, bool dryRun, bool import, int nameFlags)
+	{
+		splitflags_t splitFlags = { dryrun: dryRun ? 1 : 0, import: import ? 1:0, name_flags: nameFlags };
+		auto result = zpool_vdev_split(this.handle,arg1.toCString, arg2, arg3, splitFlags);
+		enforce(result == 0);
+		return ret;
+	}
+	void vdevFault(ulong arg1, vdev_aux_t arg2)
+	{
+		auto result = zpool_vdev_fault(this.handle,arg1,arg2);
+		enforce(result == 0);
+	}
+
+	void vdevDegrade(ulong arg1, vdev_aux_t arg2)
+	{
+		auto result = zpool_vdev_degrade(this.handle,arg1,arg2);
+		enforce(result == 0);
+	}
+
+	void vdevClear(ulong arg)
+	{
+		auto result = zpool_vdev_clear(this.handle,arg);
+		enforce(result == 0);
+	}
+
+	auto findVdev(string name)
+	{
+		int ret1, ret2,ret3,ret4;
+		nvlist_t* result = zpool_find_vdev(this.handle,name.toCString,&ret1,&ret2,&ret3,&ret4);
+		return tuple(result, ret1 !=0, ret2 !=0, ret3 !=0, ret4 !=0);
+	}
+
+	auto findVdevByPhysPath(string name)
+	{
+		int ret1, ret2,ret3,ret4;
+		nvlist_t* result = zpool_find_vdev_by_physpath(this.handle,name.toCString,&ret1,&ret2,&ret3,&ret4);
+		return tuple(result, ret1 !=0, ret2 !=0, ret3 !=0, ret4 !=0);
+	}
+
+	void labelDisk(string name)
+	{
+		auto result = zpool_label_disk(zfsHandle,this.handle,name.toCString);
+		enforce(result == 0);
+	}
+	
+	ulong vdevPathToGuid(string path)
+	{
+		return zpool_vdev_path_to_guid(this.handle,path.toCString);
+	}
+
+	string getStateAsString()
+	{
+		return zpool_get_state_str(this.handle).fromCString.idup;
+	}
+	void setProperty(string name, string value)
+	{
+		auto result = zpool_set_prop(this.handle,name.toCString, value.toCString);
+		enforce(result == 0);
+	}
+	string getProperty(zpool_prop_t arg1, zprop_source_t* propSource, bool literal)
+	{
+		char[65535] buf;
+		auto result = zpool_get_prop(this.handle,arg1, buf.ptr, buf.length, propSource, literal ? 1 : 0);
+		return buf.ptr.fromCString.idup;
+	}
+	ulong getPropertyInteger(zpool_prop_t arg1, zprop_source_t* propSource)
+	{
+		return zpool_get_prop_int(this.handle,arg1,propSource);
+	}
+
+	ZpoolStatus getStatus()
+	{
+		extern zpool_status_t zpool_get_status(zpool_handle_t *, char **, zpool_errata_t *);
+	}
+
+	ZpoolStatus importStatus(nvlist_t* args1,)
+	{
+		extern zpool_status_t zpool_import_status(nvlist_t *, char **, zpool_errata_t *);
+	}
+
+	nvlist_t* getConfig(nvlist_t** arg)
+	{
+		return zpool_get_config(this.handle,arg);
+	}
+
+	nvlist_t* getFeatures()
+	{
+		return zpool_get_features(this.handle);
+	}
+
+	void refreshStats(bool* arg)
+	{
+		auto result = zpool_refresh_stats(this.handle,arg);
+		enforce(result == 0);
+	}
+	// extern int zpool_get_errlog(zpool_handle_t *, nvlist_t **);
+
+	void export(bool arg1, string arg2)
+	{
+		auto result = zpool_export(this.handle,arg1 ? 1 : 0, arg2.toCString);
+		enforce(result == 0);
+	}
+	void exportForce(string name)
+	{
+		auto result = zpool_export_force(this.handle,name.toCString);
+		enforce(result == 0);
+	}
+	
+	static string importPool(nvlist_t* props, string name)
+	{
+		char[16385] altRoot;
+		auto result = zpool_import(zfsHandle,props,name.toCString.altRoot.ptr);
+		enforce(result ==0);
+		return altRoot.fromCString.idup;
+	}
+	
+	static void importProps(nvlist_t* props, string name, nvlist_t* props2, int arg)
+	{
+		auto result = zpool_import_props(zfsHandle,props,name.toCString, props2,arg);
+		enforce(result == 0);
+	}
+
+	zprop_list_t* expandPropertyList()
+	{
+		zprop_list_t* ret;
+		auto result = zpool_expand_proplist(this.handle,&ret);
+		enforce(result ==0);
+		return ret;
+	}
+
+	string getPropertyFeature(string name)
+	{
+		char[65535] buf;
+		auto result = zpool_prop_get_feature(this.handle,name.toCString,buf.ptr,buf.length);
+		enforce(result ==0);
+		return buf.fromCString.idup;
+	}
+}
+
+string getVdevType(nvlist_t* list)
+{
+	char* value = null;
+	auto result = nvlist_lookup_string(list,ZPOOL_CONFIG_TYPE,&value);
+	enforce(result == 0);
+	return value.fromCString.idup;
+}
+
+vdev_stat* getVdevStats(nvlist_t* list)
+{
+	vdev_stat* vs = null;
+	uint count;
+	auto result = nvlist_lookup_uint64_array(list,ZPOOL_CONFIG_VDEV_STATS,cast(ulong**)&vs, &count);
+	enforce(result == 0);
+	return vs;
+}
+
+pool_scan_stat* getVdevScanStats(nvlist_t* list)
+{
+	pool_scan_stat* vds = null;
+	uint c;
+	auto result = nvlist_lookup_uint64_array(list,ZPOOL_CONFIG_SCAN_STATS,cast(ulong**)&vds,&c);
+	enforce(result == 0);
+	return vds;
+}
+
+vdev_children_t* getVdevChildren(nvlist_t* list)
+{
+	int r;
+	vdev_children* children = calloc(vdev_children_t.sizeof,1);
+	auto result = nvlist_lookup_nvlist_array(list,ZPOOL_CONFIG_CHILDREN,&(children.first),&(children.count));
+	if (result !=0)
+		free(children);
+	enforce(result ==0);
+	return children;
+}
+
+vdev_children_t*
+/+
+extern int zpool_events_next(libzfs_handle_t *, nvlist_t **, int *, unsigned, int);
+extern int zpool_events_clear(libzfs_handle_t *, int *);
+extern int zpool_events_seek(libzfs_handle_t *, ulong, int);
+extern void zpool_obj_to_path(zpool_handle_t *, ulong, ulong, char *, size_t len);
+extern int zfs_ioctl(libzfs_handle_t *, int, struct zfs_cmd *);
+extern void zpool_explain_recover(libzfs_handle_t *, const char *, int, nvlist_t *);
+extern const char *zpool_state_to_name(vdev_state_t, vdev_aux_t);
+extern const char *zpool_pool_state_to_name(pool_state_t);
+extern void zpool_free_handles(libzfs_handle_t *);
++/
+
+/*
+ * Iterate over all active pools in the system.
+ */
+typedef int (*zpool_iter_f)(zpool_handle_t *, void *);
+extern int zpool_iter(libzfs_handle_t *, zpool_iter_f, void *);
+extern boolean_t zpool_skip_pool(const char *);
+
+
+extern const char *zpool_prop_to_name(zpool_prop_t);
+extern const char *zpool_prop_values(zpool_prop_t);
+
+// zpool_status_t
+enum ZpoolStatus
+{
+	corruptCache = ZPOOL_STATUS_CORRUPT_CACHE,	/* corrupt /kernel/drv/zpool.cache */
+	missingDeviceWithReplicas = ZPOOL_STATUS_MISSING_DEV_R,	/* missing device with replicas */
+	missingDeviceWithoutReplicas = ZPOOL_STATUS_MISSING_DEV_NR,	/* missing device with no replicas */
+	badDeviceLevelWithReplicas = ZPOOL_STATUS_CORRUPT_LABEL_R,	/* bad device label with replicas */
+	badDeviceLabelWithoutRepliacs = ZPOOL_STATUS_CORRUPT_LABEL_NR,	/* bad device label with no replicas */
+	badGuidSum = ZPOOL_STATUS_BAD_GUID_SUM,	/* sum of device guids didn't match */
+	corruptMetadata = ZPOOL_STATUS_CORRUPT_POOL,	/* pool metadata is corrupted */
+	corrupData = ZPOOL_STATUS_CORRUPT_DATA,	/* data errors in user (meta)data */
+	failingDev = ZPOOL_STATUS_FAILING_DEV,	/* device experiencing errors */
+	newerVersion = ZPOOL_STATUS_VERSION_NEWER,	/* newer on-disk version */
+	hostIdMismatch = ZPOOL_STATUS_HOSTID_MISMATCH,	/* last accessed by another system */
+	hostIdActive = ZPOOL_STATUS_HOSTID_ACTIVE,	/* currently active on another system */
+	hostIdRequired = ZPOOL_STATUS_HOSTID_REQUIRED,	/* multihost=on and hostid=0 */
+	ioFailureWait = ZPOOL_STATUS_IO_FAILURE_WAIT,	/* failed I/O, failmode 'wait' */
+	ioFailureContinue = ZPOOL_STATUS_IO_FAILURE_CONTINUE, /* failed I/O, failmode 'continue' */
+	ioFailureMMP = ZPOOL_STATUS_IO_FAILURE_MMP,	/* failed MMP, failmode not 'panic' */
+	badLog = ZPOOL_STATUS_BAD_LOG,		/* cannot read log chain(s) */
+	errataAvailable = ZPOOL_STATUS_ERRATA,		/* informational errata available */
+
+	/*
+	 * If the pool has unsupported features but can still be opened in
+	 * read-only mode, its status is ZPOOL_STATUS_UNSUP_FEAT_WRITE. If the
+	 * pool has unsupported features but cannot be opened at all, its
+	 * status is ZPOOL_STATUS_UNSUP_FEAT_READ.
+	 */
+	unsupportedFeatureRead = ZPOOL_STATUS_UNSUP_FEAT_READ,	/* unsupported features for read */
+	unsupportedFeatureWrite = ZPOOL_STATUS_UNSUP_FEAT_WRITE,	/* unsupported features for write */
+
+	/*
+	 * These faults have no corresponding message ID.  At the time we are
+	 * checking the status, the original reason for the FMA fault (I/O or
+	 * checksum errors) has been lost.
+	 */
+	faultedDeviceWithReplicas = ZPOOL_STATUS_FAULTED_DEV_R,	/* faulted device with replicas */
+	faultedDeviceWithoutReplicas = ZPOOL_STATUS_FAULTED_DEV_NR,	/* faulted device with no replicas */
+
+	/*
+	 * The following are not faults per se, but still an error possibly
+	 * requiring administrative attention.  There is no corresponding
+	 * message ID.
+	 */
+	versionOlder = ZPOOL_STATUS_VERSION_OLDER,	/* older legacy on-disk version */
+	featuresDisabled = ZPOOL_STATUS_FEAT_DISABLED,	/* supported features are disabled */
+	resilvering = ZPOOL_STATUS_RESILVERING,	/* device being resilvered */
+	offlineDev = ZPOOL_STATUS_OFFLINE_DEV,	/* device offline */
+	removedDev = ZPOOL_STATUS_REMOVED_DEV,	/* removed device */
+
+	/*
+	 * Finally, the following indicates a healthy pool.
+	 */
+	ok = ZPOOL_STATUS_OK
+}
+
+extern void zpool_print_unsup_feat(nvlist_t *config);
+
+/*
+ * Miscellaneous pool functions
+ */
+struct zfs_cmd;
+
+extern const char *zfs_history_event_names[];
+
+// vdev_name_t;
+enum VdevNameType
+{
+	path = VDEV_NAME_PATH,
+	guid = VDEV_NAME_GUID,
+	followLinks = VDEV_NAME_FOLLOW_LINKS,
+	id = VDEV_NAME_TYPE_ID,
+}
+
+extern char *zpool_vdev_name(libzfs_handle_t *, zpool_handle_t *, nvlist_t *, int name_flags);
+extern int zpool_upgrade(zpool_handle_t *, ulong);
+extern int zpool_get_history(zpool_handle_t *, nvlist_t **);
+extern int zpool_events_next(libzfs_handle_t *, nvlist_t **, int *, unsigned, int);
+extern int zpool_events_clear(libzfs_handle_t *, int *);
+extern int zpool_events_seek(libzfs_handle_t *, ulong, int);
+extern void zpool_obj_to_path(zpool_handle_t *, ulong, ulong, char *, size_t len);
+extern int zfs_ioctl(libzfs_handle_t *, int, struct zfs_cmd *);
+extern int zpool_get_physpath(zpool_handle_t *, char *, size_t);
+extern void zpool_explain_recover(libzfs_handle_t *, const char *, int, nvlist_t *);
+extern int zpool_checkpoint(zpool_handle_t *);
+extern int zpool_discard_checkpoint(zpool_handle_t *);
+
+/*
+ * Basic handle manipulations.  These functions do not create or destroy the
+ * underlying datasets, only the references to them.
+ */
+extern zfs_handle_t *zfs_open(libzfs_handle_t *, const char *, int);
+extern zfs_handle_t *zfs_handle_dup(zfs_handle_t *);
+extern void zfs_close(zfs_handle_t *);
+extern zfs_type_t zfs_get_type(const zfs_handle_t *);
+extern const char *zfs_get_name(const zfs_handle_t *);
+extern zpool_handle_t *zfs_get_pool_handle(const zfs_handle_t *);
+extern const char *zfs_get_pool_name(const zfs_handle_t *);
+
+/*
+ * Property management functions.  Some functions are shared with the kernel,
+ * and are found in sys/fs/zfs.h.
+ */
+
+
+// zfs_prop_t
+enum ZfsPropertyType
+{
+	cont = ZPROP_CONT,
+	invalid = ZPROP_INVAL,
+	type = ZFS_PROP_TYPE,
+	creation = ZFS_PROP_CREATION,
+	used = ZFS_PROP_USED,
+	available = ZFS_PROP_AVAILABLE,
+	referenced = ZFS_PROP_REFERENCED,
+	compressRatio = ZFS_PROP_COMPRESSRATIO,
+	mounted = ZFS_PROP_MOUNTED,
+	origin = ZFS_PROP_ORIGIN,
+	quota = ZFS_PROP_QUOTA,
+	reservation = ZFS_PROP_RESERVATION,
+	volumeSize = ZFS_PROP_VOLSIZE,
+	volumeBlockSize = ZFS_PROP_VOLBLOCKSIZE,
+	recordSize = ZFS_PROP_RECORDSIZE,
+	mountPoint = ZFS_PROP_MOUNTPOINT,
+	shareNFS = ZFS_PROP_SHARENFS,
+	checksum = ZFS_PROP_CHECKSUM,
+	compression = ZFS_PROP_COMPRESSION,
+	atime = ZFS_PROP_ATIME,
+	devices = ZFS_PROP_DEVICES,
+	exec = ZFS_PROP_EXEC,
+	setuid = ZFS_PROP_SETUID,
+	readOnly = ZFS_PROP_READONLY,
+	zoned = ZFS_PROP_ZONED,
+	snapDir = ZFS_PROP_SNAPDIR,
+	private_ = ZFS_PROP_PRIVATE,		/* not exposed to user, temporary */
+	aclInherit = ZFS_PROP_ACLINHERIT,
+	createTXG = ZFS_PROP_CREATETXG,
+	name = ZFS_PROP_NAME,			/* not exposed to the user */
+	canMount = ZFS_PROP_CANMOUNT,
+	iscsiOptions = ZFS_PROP_ISCSIOPTIONS,		/* not exposed to the user */
+	xattr = ZFS_PROP_XATTR,
+	numClones = ZFS_PROP_NUMCLONES,		/* not exposed to the user */
+	copies = ZFS_PROP_COPIES,
+	version_= ZFS_PROP_VERSION,
+	utf8Only = ZFS_PROP_UTF8ONLY,
+	normalize = ZFS_PROP_NORMALIZE,
+	case_ = ZFS_PROP_CASE,
+	vscan = ZFS_PROP_VSCAN,
+	nbmand = ZFS_PROP_NBMAND,
+	shareSMB = ZFS_PROP_SHARESMB,
+	refQuota = ZFS_PROP_REFQUOTA,
+	refReservation = ZFS_PROP_REFRESERVATION,
+	guid = ZFS_PROP_GUID,
+	primaryCache = ZFS_PROP_PRIMARYCACHE,
+	secondaryCache = ZFS_PROP_SECONDARYCACHE,
+	usedSnap = ZFS_PROP_USEDSNAP,
+	usedDataset = ZFS_PROP_USEDDS,
+	usedChild = ZFS_PROP_USEDCHILD,
+	usedRefReserv = ZFS_PROP_USEDREFRESERV,
+	userAccounting = ZFS_PROP_USERACCOUNTING,	/* not exposed to the user */
+	stmfShareInfo = ZFS_PROP_STMF_SHAREINFO,	/* not exposed to the user */
+	deferDestroy = ZFS_PROP_DEFER_DESTROY,
+	userRefs = ZFS_PROP_USERREFS,
+	logBias = ZFS_PROP_LOGBIAS,
+	unique = ZFS_PROP_UNIQUE,		/* not exposed to the user */
+	objSetID = ZFS_PROP_OBJSETID,
+	dedup = ZFS_PROP_DEDUP,
+	mlsLabel = ZFS_PROP_MLSLABEL,
+	sync = ZFS_PROP_SYNC,
+	dNodeSize = ZFS_PROP_DNODESIZE,
+	refRatio = ZFS_PROP_REFRATIO,
+	written = ZFS_PROP_WRITTEN,
+	clones = ZFS_PROP_CLONES,
+	logicalUsed = ZFS_PROP_LOGICALUSED,
+	logicalReferenced = ZFS_PROP_LOGICALREFERENCED,
+	inconsistent = ZFS_PROP_INCONSISTENT,		/* not exposed to the user */
+	volMode = ZFS_PROP_VOLMODE,
+	filesystemLimit = ZFS_PROP_FILESYSTEM_LIMIT,
+	snapshotLimit = ZFS_PROP_SNAPSHOT_LIMIT,
+	filesystemCount = ZFS_PROP_FILESYSTEM_COUNT,
+	snapshotCount = ZFS_PROP_SNAPSHOT_COUNT,
+	snapdev = ZFS_PROP_SNAPDEV,
+	aclType = ZFS_PROP_ACLTYPE,
+	selinuxContext = ZFS_PROP_SELINUX_CONTEXT,
+	selinuxFSContext = ZFS_PROP_SELINUX_FSCONTEXT,
+	selinuxDefContext = ZFS_PROP_SELINUX_DEFCONTEXT,
+	selinuxRootContext = ZFS_PROP_SELINUX_ROOTCONTEXT,
+	relatime = ZFS_PROP_RELATIME,
+	redundantMetadata = ZFS_PROP_REDUNDANT_METADATA,
+	overlay = ZFS_PROP_OVERLAY,
+	prevSnap = ZFS_PROP_PREV_SNAP,
+	receiveResumeToken = ZFS_PROP_RECEIVE_RESUME_TOKEN,
+	encryption = ZFS_PROP_ENCRYPTION,
+	keyLocation = ZFS_PROP_KEYLOCATION,
+	keyFormat = ZFS_PROP_KEYFORMAT,
+	pbkdf2Salt = ZFS_PROP_PBKDF2_SALT,
+	pbkdf2Iters = ZFS_PROP_PBKDF2_ITERS,
+	encryptionRoot = ZFS_PROP_ENCRYPTION_ROOT,
+	keyGUID = ZFS_PROP_KEY_GUID,
+	keyStatus = ZFS_PROP_KEYSTATUS,
+	remapTXG = ZFS_PROP_REMAPTXG,		/* not exposed to the user */
+	specialSmallBlocks = ZFS_PROP_SPECIAL_SMALL_BLOCKS,
+	ivsetGUID = ZFS_PROP_IVSET_GUID,		/* not exposed to the user */
+	numProps = ZFS_NUM_PROPS
+}
+
+string propertyDefaultString(ZfsPropertyType prop)
+{
+	return zfs_prop_default_string(prop.to!zfs_prop_t).fromCString.idup;
+}
+
+ulong propertyDefaultNumeric(ZfsPropertyType prop)
+{
+	return zfs_prop_default_numeric(prop.to!zfs_prop_t);
+}
+
+string propertyColumnName(ZfsPropertyType prop)
+{
+	return zfs_prop_column_name(ptop.to!zfs_prop_t).fromCString.idup;
+}
+
+bool propertyAlignRIght(ZfsPropertyType prop)
+{
+	return (zfs_prop_align_right(ptop.to!zfs_prop_t) != 0);
+}
+
+extern nvlist_t *zfs_valid_proplist(libzfs_handle_t *, zfs_type_t, nvlist_t *, ulong, zfs_handle_t *, zpool_handle_t *, boolean_t, const char *);
+
+string propertyToName(ZfsPropertyType prop)
+{
+	return zfs_prop_to_name(prop.to!zfs_prop_t).fromCString.idup;
+}
+
+void setProperty(ZfsHandle handle, string name, string value)
+{
+	auto result = zfs_prop_set(handle.handle,name.toCString,value.toCString);
+	enforce(result == 0);
+}
+
+void setProperty(ZfsHandle handle, nvlist_t* list)
+{
+	auto result = zfs_prop_set_list(handle.handle,list);
+	enforce(result == 0);
+}
+
+ulong getPropertyInteger(ZfsHandle handle, ZfsPropertyType prop)
+{
+	return zfs_prop_get_int(handle.handle, prop.to!zfs_prop_t);
+}
+
+string propertyValues(ZfsPropertyType prop)
+{
+	return zfs_prop_values(prop.to!zfs_prop_t).fromCString.idup;
+}
+
+bool propertyIsString(ZfsPropertyType prop)
+{
+	return (zfs_prop_is_string(prop.to!zfs_prop_t) != 0);
+}
+
+extern int zfs_prop_get(zfs_handle_t *, zfs_prop_t, char *, size_t, zprop_source_t *, char *, size_t, boolean_t);
+extern int zfs_prop_get_recvd(zfs_handle_t *, const char *, char *, size_t, boolean_t);
+extern int zfs_prop_get_numeric(zfs_handle_t *, zfs_prop_t, ulong *, zprop_source_t *, char *, size_t);
+
+ulong getPropertyUserQuoteInteger(ZfsHandle handle, string propertyName)
+{
+	ulong ret;
+	auto result = zfs_prop_get_userquota_int(handle.handle,propertyName.toCString, &ret);
+	enforce(result == 0);
+	return retl
+}
+
+extern int zfs_prop_get_userquota(zfs_handle_t *zhp, const char *propname, char *propbuf, int proplen, boolean_t literal);
+extern int zfs_prop_get_written_int(zfs_handle_t *zhp, const char *propname, ulong *propvalue);
+extern int zfs_prop_get_written(zfs_handle_t *zhp, const char *propname, char *propbuf, int proplen, boolean_t literal);
+extern int zfs_prop_get_feature(zfs_handle_t *zhp, const char *propname, char *buf, size_t len);
+extern ulong getprop_uint64(zfs_handle_t *, zfs_prop_t, char **);
+extern int zfs_prop_inherit(zfs_handle_t *, const char *, boolean_t);
+
+nvlist_t* getAllProperties(ZfsHandle handle)
+{
+	return zfs_get_all_props(handle.handle);
+}
+
+nvlist_t* getUserProperties(ZfsHandle handle)
+{
+	return zfs_get_user_props(handle.handle);
+}
+
+nflist_t* getReceivedProperties(ZfsHandle handle)
+{
+	return zfs_get_recvd_props(handle.handle);
+}
+nvlist_t* getClonesList(ZfsHandle handle)
+{
+	return zfs_get_clones_nvl(handle.handle);
+}
+
+
+
+/*
+ * zfs encryption management
+ */
+extern int zfs_crypto_get_encryption_root(zfs_handle_t *, boolean_t *, char *);
+extern int zfs_crypto_create(libzfs_handle_t *, char *, nvlist_t *, nvlist_t *,
+    boolean_t stdin_available, uint8_t **, uint_t *);
+extern int zfs_crypto_clone_check(libzfs_handle_t *, zfs_handle_t *, char *,
+    nvlist_t *);
+extern int zfs_crypto_attempt_load_keys(libzfs_handle_t *, char *);
+extern int zfs_crypto_load_key(zfs_handle_t *, boolean_t, char *);
+extern int zfs_crypto_unload_key(zfs_handle_t *);
+extern int zfs_crypto_rewrap(zfs_handle_t *, nvlist_t *, boolean_t);
+
+typedef struct zprop_list {
+	int		pl_prop;
+	char		*pl_user_prop;
+	struct zprop_list *pl_next;
+	boolean_t	pl_all;
+	size_t		pl_width;
+	size_t		pl_recvd_width;
+	boolean_t	pl_fixed;
+} zprop_list_t;
+
+extern int zfs_expand_proplist(zfs_handle_t *, zprop_list_t **, boolean_t, boolean_t);
+extern void zfs_prune_proplist(zfs_handle_t *, uint8_t *);
+
+enum ZfsMountPoint
+{
+	none = ZFS_MOUNTPOINT_NONE,
+	legacy = ZFS_MOUNTPOINT_LEGACY,
+}
+
+enum ZfsFeature
+{
+	disabled = ZFS_FEATURE_DISABLED,
+	enabled = ZFS_FEATURE_ENABLED.
+	active = ZFS_FEATURE_ACTIVE,
+	unsupportedInactive = ZFS_UNSUPPORTED_INACTIVE.
+	unsupportedReadOnly = ZFS_UNSUPPORTED_READONLY,
+}
+
+/*
+ * zpool property management
+ */
+extern const char *zpool_prop_default_string(zpool_prop_t);
+extern ulong zpool_prop_default_numeric(zpool_prop_t);
+extern const char *zpool_prop_column_name(zpool_prop_t);
+extern boolean_t zpool_prop_align_right(zpool_prop_t);
+
+/*
+ * Functions shared by zfs and zpool property management.
+ */
+extern int zprop_iter(zprop_func func, void *cb, boolean_t show_all,
+    boolean_t ordered, zfs_type_t type);
+extern int zprop_get_list(libzfs_handle_t *, char *, zprop_list_t **,
+    zfs_type_t);
+extern void zprop_free_list(zprop_list_t *);
+
+#define	ZFS_GET_NCOLS	5
+
+// zfs_get_column_t
+enum ZfsGetColumn
+{
+	none = GET_COL_NONE,
+	name = GET_COL_NAME,
+	property = GET_COL_PROPERTY,
+	value = GET_COL_VALUE,
+	received = GET_COL_RECVD,
+	source = GET_COL_SOURCE.
+}
+
+struct ZfsPropertyPrint
+{
+	int cbSources;
+	ZfsGetColumn[] columnTypes;
+	int[] columnWidths;
+	bool scripted;
+	bool literal;
+	bool first;
+	ZfsPropertyList* propertyList;
+	ZfsType type;
+}
+
+/*
+ * Functions for printing zfs or zpool properties
+ */
+typedef struct zprop_get_cbdata {
+	int cb_sources;
+	zfs_get_column_t cb_columns[ZFS_GET_NCOLS];
+	int cb_colwidths[ZFS_GET_NCOLS + 1];
+	boolean_t cb_scripted;
+	boolean_t cb_literal;
+	boolean_t cb_first;
+	zprop_list_t *cb_proplist;
+	zfs_type_t cb_type;
+} zprop_get_cbdata_t;
+
+void zprop_print_one_property(const char *, zprop_get_cbdata_t *, const char *, const char *, zprop_source_t, const char *, const char *);
+
+alias ZfsIteratorFunction = extern(C) int function(zfshandle_t* void*);
+extern int zfs_iter_root(libzfs_handle_t *, zfs_iter_f, void *);
+extern int zfs_iter_children(zfs_handle_t *, zfs_iter_f, void *);
+extern int zfs_iter_dependents(zfs_handle_t *, boolean_t, zfs_iter_f, void *);
+extern int zfs_iter_filesystems(zfs_handle_t *, zfs_iter_f, void *);
+extern int zfs_iter_snapshots(zfs_handle_t *, boolean_t, zfs_iter_f, void *, ulong, ulong);
+extern int zfs_iter_snapshots_sorted(zfs_handle_t *, zfs_iter_f, void *, ulong, ulong);
+extern int zfs_iter_snapspec(zfs_handle_t *, const char *, zfs_iter_f, void *);
+extern int zfs_iter_bookmarks(zfs_handle_t *, zfs_iter_f, void *);
+extern int zfs_iter_mounted(zfs_handle_t *, zfs_iter_f, void *);
+
+typedef struct get_all_cb {
+	zfs_handle_t	**cb_handles;
+	size_t		cb_alloc;
+	size_t		cb_used;
+} get_all_cb_t;
+
+void foreachMountpoint(
+void zfs_foreach_mountpoint(libzfs_handle_t *, zfs_handle_t **, size_t, zfs_iter_f, void *, boolean_t);
+void libzfs_add_handle(get_all_cb_t *, zfs_handle_t *);
+
+@SILdoc(`create dataset`)
+void createDataset(string name, DatasetType type, nvlist_t* props = null)
+{
+	import std.format: format;
+	auto result = zfs_create(zfsHandle, name.toCString, type.to!zfs_type_t, props);
+	enforce(result ==0, format!"unable to create dataset %s: %s"(name, result));
+}
+
+void createAncestors(string name)
+{
+	import std.format: format;
+	auto result = zfs_create_ancestors(zfsHandle, name.toCString);
+	enforce(result ==0, format!"unable to create ancestors for %s: %s"(name, result));
+}
+
+void destroy(DatasetList dataset, bool defer)
+{
+	auto result = zfs_destroy(dataset.handle.zh, defer ? 1 : 0);
+	enforce(result == 0);
+}
+
+DatasetList listChildren(DatasetList dataset)
+{
+	DatasetList ret = DatasetList.create();
+	int err = zfs_iter_children(dataset.handle.zh,datasetListCallback,&ret.handle);
+	if (err !=0 || ret.handle.zh is null)
+	{
+		dataset_list_free(ret.handle);
+		return DatasetList(null);
+	}
+	return ret;
+}
+
+ZpoolList getPool(DatasetList dataset)
+{
+	ZpoolList pool = ZpoolList.create();
+	if (pool.handle !is null)
+	{
+		pool.handle.zph = zfs_get_pool_handle(dataset.handle.zh);
+	}
+	return pool;
+}
+
+void setProperty(DatasetList dataset, ZfsPropertyType property, string value)
+{
+	auto result = zfs_prop_set(dataset.handle.zh,zfs_prop_to_name(property.to!zfs_prop_t),value.toCString);
+	enforce(result ==0);
+}
+
+void setProperty(DatasetList dataset, string property, string value)
+{
+	auto result = zfs_prop_set(dataset.handle.zh,property.toCString,value.toCString);
+	enforce(result ==0);
+}
+
+
+	
+void destroySnaps(ZfsHandle handle, 
+extern int zfs_destroy_snaps(zfs_handle_t *, char *, boolean_t);
+extern int zfs_destroy_snaps_nvl(libzfs_handle_t *, nvlist_t *, boolean_t);
+
+void clone(ZfsHandle handle, string name, nvlist_t* props)
+{
+	auto result = zfs_clone(handle.handle,name.toCString,props);
+	enforce(result == 0);
+}
+
+void snapshot(string name, bool arg, nvlist_t* props)
+{
+	auto result = zfs_snapshot(zfsHandle,name.toCString, arg ? 1 : 0, props);
+	enforce(result == 0);
+}
+
+void snapshot(nvlist_t* snaps, nvlist_t* props)
+{
+	auto result = zfs_snapshot_nvl(zfsHandle,snaps,props);
+	enforce(result == 0);
+}
+
+void rollback(zfs_handle_t* handle, bool arg)
+{
+	auto result = zfs_rollback(zfsHandle,handle,arg ? 1 : 0);
+	enforce(result == 0);
+}
+
+extern int zfs_rename(zfs_handle_t *, const char *, boolean_t, boolean_t);
+
+struct SendFlag
+{
+	verbose,					// print informational messages (-v)
+	recursiveSend,				// replicate (-R)
+	doAllIntermediateSnaps,		// for incrementals, do all intermediate snapshots
+	fromOrigin,					// for clone dataset, do incremental from origin
+	deduplicate, 				// do deduplication
+	sendProperties,				// send properties (-p)
+	dryRun,						// do not send (no-op ie -n)
+	parsable,					// parsable verbose output (-P)
+	progress,					// show progress (-v)
+	largeBlocksPermitted,		// large blocks (> 128K) permitted
+	embedData,					// WRITE_EMBEDDED records of type DATA are permitted
+	compress,					// compressed WRITE records are permitted
+	raw,						// raw encypted records are permitted
+	onlySendReceivedProperties,	//	only send received properties (-b)
+	includeSnapshotHolds,		//	include snapshot holds in send stream
+}
+
+sendflags_t asSendFlags(SendFlag[] flags)
+{
+	sendflags_t ret;
+	foreach(flag;flags)
+	{
+		final switch(flag) with(SendFlag)
+		{
+			case verbose:
+				ret.verbose = 1;
+				break;
+			case recursiveSend:
+				ret.recursive = 1;
+				break;
+			case doAllIntermediateSnaps:
+				ret.doall = 1;
+				break;
+			case fromOrigin:
+				ret.fromorigin = 1;
+				break;
+			case deduplicate:
+				ret.dedup = 1;
+				break;
+			case sendProperties:
+				ret.props = 1;
+				break;
+			case dryRun:
+				ret.dryrun = 1;
+				break;
+			case parsable:
+				ret.parsable = 1;
+				break;
+			case progress:
+				ret.progress = 1;
+				break;
+			case largeBlocksPermitted:
+				ret.largeblock = 1;
+				break;
+			case embedData:
+				ret.embed_data = 1;
+				break;
+			case compress:
+				ret.compress = 1;
+				break;
+			case raw:
+				ret.raw = 1;
+				break;
+			case onlySendReceivedProperties:
+				ret.backup = 1;
+				break;
+			case includeSnapshotHolds:
+				ret.holds = 1;
+				break;
+		}
+	}
+	return ret;
+}
+
+
+typedef boolean_t (snapfilter_cb_t)(zfs_handle_t *, void *);
+
+extern int zfs_send(zfs_handle_t *, const char *, const char *, sendflags_t *, int, snapfilter_cb_t, void *, nvlist_t **);
+
+void sendOne(ZfsHandle handle, string name, int arg, SendFlag[] flags)
+{
+	auto cflags = flags.asSendFlags;
+	auto result = zfs_send_one(handle.handle,name.toCString, arg,cflags);
+	enforce(result == 0);
+}
+
+void sendResume(ZfsHandle handle, SendFlag[] flags, int outFD, string name)
+{
+	auto cflags = flags.asSendFlags;
+	auto result = zfs_send_resume(handle.handle,cflags,outFD,name.toCString);
+	enforce(result == 0);
+}
+
+nvlist_t* sendResumeTokenToNvlist(ZfsHandle handle, string token)
+{
+	auto ret = zfs_send_resume_token_to_nvlist(handle.handle,token.toCString);
+	enforce(ret !is null);
+	return ret;
+}
+
+void promote(ZfsHandle handle)
+{
+	auto result = zfs_promote(handle.handle);
+	enforce(result == 0);
+}
+
+void hold(ZfsHandle handle, string arg1, string arg2, bool arg3, int arg4)
+{
+	auto result = zfs_hold(handle.handle,arg1,arg2,arg2 ? 1 : 0, arg4);
+	enforce(result == 0);
+}
+
+extern int zfs_hold_nvl(zfs_handle_t *, int, nvlist_t *);
+extern int zfs_release(zfs_handle_t *, const char *, const char *, boolean_t);
+extern int zfs_get_holds(zfs_handle_t *, nvlist_t **);
+extern ulong zvol_volsize_to_reservation(ulong, nvlist_t *);
+
+typedef int (*zfs_userspace_cb_t)(void *arg, const char *domain,
+    uid_t rid, ulong space);
+
+extern int zfs_userspace(zfs_handle_t *, zfs_userquota_prop_t, zfs_userspace_cb_t, void *);
+extern int zfs_get_fsacl(zfs_handle_t *, nvlist_t **);
+extern int zfs_set_fsacl(zfs_handle_t *, boolean_t, nvlist_t *);
+
+enum ReceiveFlag
+{
+	verbose,				// print informational messages (ie, -v was specified)
+	isPrefix,				// the destination is a prefix, not the exact fs (ie, -d)
+	isTail,					// only the tail of the sent snapshot path is appended to the destination to determine the received snapshot name (ie, -e)
+	dryRun, 				// do not actually do the recv, just check if it would work (ie, -n)
+	force, 					// rollback/destroy filesystems as necessary (eg, -F)
+	canMountOff, 			// set "canmount=off" on all modified filesystems
+	resumable,				// mark the file systems as "resumable" and do not destroy them if the  receive is interrupted
+	nomount,				// do not mount file systems as they are extracted (private)
+	holds, 					// was holds flag set in the compound header?
+	skipHolds,				// skip receive of snapshot holds
+}
+
+recvflags_t asReceiveFlags(ReceiveFlag[] flags)
+{
+	recvflags_t ret;
+	foreach(flag;flags)
+	{
+		final switch(flag) with(ReceiveFlag)
+		{
+			case verbose:
+				ret.verbose = 1;
+				break;
+			case isPrefix:
+				ret.isprefix = 1;
+				break;
+			case isTail:
+				ret.istail = 1;
+				break;
+			case dryRun:
+				ret.dryrun = 1;
+				break;
+			case canMountOff:
+				ret.canMountOff = 1;
+				break;
+			case resumable:
+				ret.resumable = 1;
+				break;
+			case nomount:
+				ret.nomount = 1;
+				break;
+			case holds:
+				ret.holds = 1;
+				break;
+			case skipHolds:
+				ret.skipholds = 1;
+				break;
+		}
+	}
+	return ret;
+}
+
+void receive(LibZfsHandle handle, string arg, nvlist_t* props, ReceiveFlag[] flags, int arg2, avl_tree_t* tree)
+{
+	auto cflags = flags.asReceiveFlags;
+	auto result = zfs_receive(handle.handle, arg.toCString, props, &cflags, arg2, tree);
+	enforce(result == 0);
+}
+
+// diff_flags_t
+enum ZfsDiffFlag
+{
+	parseable = ZFS_DIFF_PARSEABLE,
+	timestamp = ZFS_DIFF_TIMESTAMP,
+	classify = ZFS_DIFF_CLASSIFY,
+}
+
+void showDiffs(ZfsHandle handle, int arg1, string name, string value, int arg2)
+{
+	auto result = zfs_show_diffs(handle.handle,arg1,name.toCString,value.toCstring,arg2);
+	enforce(result == 0);
+}
+
+/*
+ * Miscellaneous functions.
+ */
+extern const char *zfs_type_to_name(zfs_type_t);
+extern void zfs_refresh_properties(zfs_handle_t *);
+extern int zfs_name_valid(const char *, zfs_type_t);
+extern zfs_handle_t *zfs_path_to_zhandle(libzfs_handle_t *, char *, zfs_type_t);
+extern int zfs_parent_name(zfs_handle_t *, char *, size_t);
+extern boolean_t zfs_dataset_exists(libzfs_handle_t *, const char *,
+    zfs_type_t);
+extern int zfs_spa_version(zfs_handle_t *, int *);
+extern boolean_t zfs_bookmark_exists(const char *path);
+
+/*
+ * Mount support functions.
+ */
+extern boolean_t is_mounted(libzfs_handle_t *, const char *special, char **);
+extern boolean_t zfs_is_mounted(zfs_handle_t *, char **);
+extern int zfs_mount(zfs_handle_t *, const char *, int);
+extern int zfs_unmount(zfs_handle_t *, const char *, int);
+extern int zfs_unmountall(zfs_handle_t *, int);
+
+/*
+ * Share support functions.
+ */
+extern boolean_t zfs_is_shared(zfs_handle_t *);
+extern int zfs_share(zfs_handle_t *);
+extern int zfs_unshare(zfs_handle_t *);
+
+/*
+ * Protocol-specific share support functions.
+ */
+extern boolean_t zfs_is_shared_nfs(zfs_handle_t *, char **);
+extern boolean_t zfs_is_shared_smb(zfs_handle_t *, char **);
+extern int zfs_share_nfs(zfs_handle_t *);
+extern int zfs_share_smb(zfs_handle_t *);
+extern int zfs_shareall(zfs_handle_t *);
+extern int zfs_unshare_nfs(zfs_handle_t *, const char *);
+extern int zfs_unshare_smb(zfs_handle_t *, const char *);
+extern int zfs_unshareall_nfs(zfs_handle_t *);
+extern int zfs_unshareall_smb(zfs_handle_t *);
+extern int zfs_unshareall_bypath(zfs_handle_t *, const char *);
+extern int zfs_unshareall_bytype(zfs_handle_t *, const char *, const char *);
+extern int zfs_unshareall(zfs_handle_t *);
+extern int zfs_deleg_share_nfs(libzfs_handle_t *, char *, char *, char *,
+    void *, void *, int, zfs_share_op_t);
+
+extern int zfs_nicestrtonum(libzfs_handle_t *, const char *, ulong *);
+
+/*
+ * Utility functions to run an external process.
+ */
+#define	STDOUT_VERBOSE	0x01
+#define	STDERR_VERBOSE	0x02
+#define	NO_DEFAULT_PATH	0x04 /* Don't use $PATH to lookup the command */
+
+int libzfs_run_process(const char *, char **, int flags);
+int libzfs_run_process_get_stdout(const char *path, char *argv[], char *env[],
+    char **lines[], int *lines_cnt);
+int libzfs_run_process_get_stdout_nopath(const char *path, char *argv[],
+    char *env[], char **lines[], int *lines_cnt);
+
+void libzfs_free_str_array(char **strs, int count);
+
+int libzfs_envvar_is_set(char *envvar);
+
+@SILdoc(`print ZFS version`)
+void printVersion()
+{
+	import std.format: format;
+	auto result = zfs_version_print();
+	enforce(result == 0, format!"error printing version: %s"(result));
+}
+
+@SILdoc(`get ZFS version userland`)
+string versionUserland()
+{
+	char[16384] buf;
+	zfs_version_userland(buf.ptr,buf.length.to!int);
+	return buf.fromCString;
+}
+@SILdoc(`get ZFS version kernel`)
+string versionKernel()
+{
+	char[16384] buf;
+	zfs_version_kernel(buf.ptr,buf.length.to!int);
+	return buf.fromCString;
+}
+
+/*
+ * Given a device or file, determine if it is part of a pool.
+ */
+extern int zpool_in_use(libzfs_handle_t *, int, pool_state_t *, char **, boolean_t *);
+
+/*
+ * Label manipulation.
+ */
+extern int zpool_clear_label(int);
+
+// Management interfaces for SMB ACL files
+/+
+int zfs_smb_acl_add(libzfs_handle_t *, char *, char *, char *);
+int zfs_smb_acl_remove(libzfs_handle_t *, char *, char *, char *);
+int zfs_smb_acl_purge(libzfs_handle_t *, char *, char *);
+int zfs_smb_acl_rename(libzfs_handle_t *, char *, char *, char *, char *);
++/
+
+@SILdoc(`Enable datasets within a pool by mounting and sharing them`)
+void enableDatasets(string dataset, int value)
+{
+	import std.format: format;
+	auto result = zpool_enable_datasets(this.handle,dataset.toStringz,value);
+	enforce(result == 0, format!"error enabling dataset: %s"(result));
+}
+
+@SILdoc(`disable datasets within a pool by unmounting and unsharing them.`)
+void disableDatasets(bool value)
+{
+	import std.format: format;
+	auto result = zpool_disable_datasets(this.handle,value ? 1 : 0);
+	enforce(result == 0, format!"error disabling dataset: %s"(result));
+}
+
+@SILdoc(`remap indirects`)
+void remapIndirects(string value)
+{
+	import std.format: format;
+	auto result = zfs_remap_indirects(zfsHandle,value.toCString);
+	enforce(result == 0, format!"error remapping indirects: %s"(result));
+}
+
+nvlist_t* getProperties(string[string] properties)
+{
+	nvlist_t* ret = nvlistAlloc(NV_UNIQUE_NAME,0);
+	foreach(entry;properties.byKeyValue)
+	{
+		enforce(nvlist_add_string(ret,entry.key.toCString,entry.value.toCstring)==0, "allocating properties");
+	}
+	return ret;
+}
+
+nvlist_t* getList(string[] values)
+{
+	nvlist_t* ret = nvlistAlloc(NV_UNIQUE_NAME,0);
+	foreach(entry;values);
+	{
+		nvlistAddBoolean(ret,value);
+	}
+	return ret;
+}
+
+

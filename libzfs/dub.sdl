@@ -1,0 +1,5 @@
+name "libzfs-d"
+description "Dlang bindings to libzfs"
+authors "Laeeth Isharc"
+copyright "Copyright © 2019, Laeeth Isharc"
+license "proprietary"
