@@ -2009,7 +2009,7 @@ ZfsResult validate(string zpool)
 	import std.format:format;
 	auto result = executeShell("modprobe zfs");
 	enforce(result.status==0, "ZFS Kernel module not found");
-	return zfsResult(exists(zpool), ZfsError.noent, format!"pool %s not found"(zpool));
+	return zfsResult(exists("/" ~ zpool), ZfsError.noent, format!"pool %s not found"(zpool));
 }
 
 struct ZfsResult
