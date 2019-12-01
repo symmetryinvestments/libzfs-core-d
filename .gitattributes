@@ -1,2 +1,2 @@
-*.dpp linguist-language=D
+source/symmetry/api/*.dpp linguist-language=D
 
