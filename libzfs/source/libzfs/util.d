@@ -4718,11 +4718,6 @@ bool isSnapshot(MountEntry entry)
 	return (entry.devicePath.canFind("@"));
 }
 
- tank3/shared/kaleidic/develop /tank3/shared/kaleidic/develop zfs rw,xattr,noacl 0 0
- tank3/shared/kaleidic/symmetry /tank3/shared/kaleidic/symmetry zfs rw,xattr,noacl 0 0
- tank3/shared/kaleidic/symmetry/projects /tank3/shared/kaleidic/symmetry/projects zfs rw,xattr,noacl 0 0
-
-
 enum Operation
 {
 	unshare,
